@@ -126,43 +126,32 @@ export async function signOutUser() {
  * Returns the current user's profile, or null if not logged in.
  * Falls back to partial auth metadata if the DB trigger hasn't fired yet.
  */
-export async function getSessionAndProfile() {
+export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
   // First try to get session normally
   let { data: { session }, error: sessionError } = await client().auth.getSession();
   if (sessionError) throw sessionError;
 
-  // If no session, try exchanging code from URL (PKCE flow for email confirmation)
+  // If no session, try extracting from saved URL params (cleaned before render)
   if (!session) {
-    const hash = window.location.hash;
-    const params = new URLSearchParams(window.location.search);
-    
-    // Handle token hash from email confirmation
-    if (hash && hash.includes('access_token')) {
-      const hashParams = new URLSearchParams(hash.substring(1));
+    // Handle token hash from email confirmation / OAuth
+    if (savedHash && savedHash.includes('access_token')) {
+      const hashParams = new URLSearchParams(savedHash.substring(1));
       const accessToken = hashParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token');
-      
       if (accessToken) {
         const { data, error } = await client().auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken || ''
         });
-        if (!error && data.session) {
-          session = data.session;
-          // Clean URL
-          window.history.replaceState(null, '', window.location.pathname);
-        }
+        if (!error && data.session) session = data.session;
       }
     }
-    
-    // Handle code param (PKCE)
-    const code = params.get('code');
+
+    // Handle PKCE code exchange
+    const code = new URLSearchParams(savedSearch).get('code');
     if (code) {
       const { data, error } = await client().auth.exchangeCodeForSession(code);
-      if (!error && data.session) {
-        session = data.session;
-        window.history.replaceState(null, '', window.location.pathname);
-      }
+      if (!error && data.session) session = data.session;
     }
   }
 

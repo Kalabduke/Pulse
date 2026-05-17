@@ -21,6 +21,21 @@ import {
   notifyFriendsOfUpdate
 } from './supabase.js';
 
+// ── Clean URL immediately — remove tokens/codes before anything renders ──
+// Save them first so getSessionAndProfile can still use them
+const _savedHash = window.location.hash;
+const _savedSearch = window.location.search;
+(function cleanUrl() {
+  const hasToken = _savedHash && (
+    _savedHash.includes('access_token') ||
+    _savedHash.includes('type=')
+  );
+  const hasCode = _savedSearch && new URLSearchParams(_savedSearch).has('code');
+  if (hasToken || hasCode) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+})();
+
 /* ==========================================
    APP STATE
    ========================================== */
@@ -78,7 +93,7 @@ async function checkNavigationState() {
   }
 
   try {
-    const profile = await getSessionAndProfile();
+    const profile = await getSessionAndProfile(_savedHash, _savedSearch);
 
     if (profile) {
       state.userProfile = profile;
@@ -719,35 +734,43 @@ function requestNotificationPermission() {
  * This enables background notifications even when the app is closed.
  */
 async function subscribeToPushNotifications() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    console.warn('[Pulse] Push not supported on this browser');
+    return;
+  }
 
   try {
     const reg = await navigator.serviceWorker.ready;
+    console.log('[Pulse] SW ready, checking push subscription...');
 
-    // Check if already subscribed
     let subscription = await reg.pushManager.getSubscription();
 
     if (!subscription) {
-      // VAPID public key — must match the private key set in Supabase Edge Function secrets
       const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      console.log('[Pulse] VAPID key present:', !!VAPID_PUBLIC_KEY);
 
       if (!VAPID_PUBLIC_KEY) {
-        console.warn('[Pulse] VAPID_PUBLIC_KEY not set — background push disabled');
+        console.warn('[Pulse] VAPID_PUBLIC_KEY not set in env — background push disabled');
+        showToast('Notifications enabled (in-app only — VAPID key missing)', 'info');
         return;
       }
 
+      console.log('[Pulse] Subscribing to push...');
       const keyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: keyBytes
       });
+      console.log('[Pulse] Push subscription created:', subscription.endpoint);
+    } else {
+      console.log('[Pulse] Already subscribed:', subscription.endpoint);
     }
 
-    // Save to Supabase
     await savePushSubscription(subscription);
-    console.log('[Pulse] Push subscription saved');
+    console.log('[Pulse] Push subscription saved to Supabase ✓');
   } catch (err) {
-    console.warn('[Pulse] Push subscription failed:', err.message);
+    console.error('[Pulse] Push subscription error:', err.message, err);
+    showToast('Could not enable background notifications: ' + err.message, 'error');
   }
 }
 
@@ -766,6 +789,7 @@ function urlBase64ToUint8Array(base64String) {
 function showPersistentStatusNotification(friendName, emoji, statusText) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
+  // Try SW first (better — shows on lockscreen)
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       type: 'FRIEND_STATUS_UPDATE',
@@ -774,22 +798,26 @@ function showPersistentStatusNotification(friendName, emoji, statusText) {
       statusText,
       url: '/'
     });
-  } else {
-    // Fallback direct notification
+  }
+
+  // Always also show a direct notification as fallback
+  // (works even if SW message fails)
+  try {
     new Notification(`${emoji} ${friendName}`, {
       body: `"${statusText}"`,
       icon: '/icon-192.png',
       badge: '/notification-icon.png',
-      vibrate: [200, 100, 200],
       tag: `pulse-popup-${friendName}`,
-      renotify: true
+      renotify: true,
+      silent: false
     });
+  } catch (e) {
+    console.warn('[Pulse] Direct notification failed:', e.message);
   }
 }
 
 /**
  * Show a notification when a friend updates their status.
- * Called from the realtime sync handler.
  */
 function notifyFriendStatusUpdate(friendName, emoji, statusText) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
