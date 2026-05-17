@@ -270,7 +270,7 @@
         <!-- Status History Panel -->
         <div class="glass-card" style="margin-top: 4px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <h3 style="font-size: 16px; color: #a5b4fc;">My Status History</h3>
+            <h3 style="font-size: 16px; color: #a5b4fc;">Friends' Status History</h3>
             <button id="btn-refresh" class="btn btn-secondary btn-small" style="padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
               <span id="refresh-icon">↻</span>
               <span>Refresh</span>
@@ -351,6 +351,33 @@
   <div id="global-toast" class="toast">
     <span id="toast-icon">✨</span>
     <span id="toast-text">Success message goes here</span>
+  </div>
+
+  <!-- Custom Confirm Modal -->
+  <div id="custom-confirm-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box">
+      <div class="custom-modal-icon" id="confirm-modal-icon">⚠️</div>
+      <h3 class="custom-modal-title" id="confirm-modal-title">Are you sure?</h3>
+      <p class="custom-modal-body" id="confirm-modal-body"></p>
+      <div class="custom-modal-actions">
+        <button id="confirm-modal-cancel" class="btn btn-secondary" style="flex:1;">Cancel</button>
+        <button id="confirm-modal-ok" class="btn btn-primary" style="flex:1;">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Nickname Modal -->
+  <div id="nickname-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box">
+      <div class="custom-modal-icon">🏷️</div>
+      <h3 class="custom-modal-title">Set Nickname</h3>
+      <p class="custom-modal-body" id="nickname-modal-body">Give this friend a nickname only you can see.</p>
+      <input type="text" id="nickname-modal-input" class="input-field" placeholder="Nickname (leave empty to clear)" maxlength="30" style="margin-bottom: 4px;">
+      <div class="custom-modal-actions">
+        <button id="nickname-modal-cancel" class="btn btn-secondary" style="flex:1;">Cancel</button>
+        <button id="nickname-modal-save" class="btn btn-primary" style="flex:1;">Save</button>
+      </div>
+    </div>
   </div>
 
   <!-- Load Style & Main Code -->

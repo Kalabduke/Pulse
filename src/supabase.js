@@ -91,7 +91,6 @@ export async function signUpWithPassword(email, password, name) {
   if (error) throw error;
   return data;
 }
-
 /**
  * Sign in with Google OAuth (redirects to Google then back).
  */
@@ -207,6 +206,30 @@ export async function updateStatus(name, emoji, text) {
     });
 
   return data;
+}
+
+/**
+ * Fetch the last 15 status updates across all connected friends (not self).
+ * Returns entries sorted newest first, with the friend's name included.
+ */
+export async function fetchFriendsStatusHistory(connectedFriendIds) {
+  if (!connectedFriendIds || connectedFriendIds.length === 0) return [];
+
+  const { data, error } = await client()
+    .from('status_history')
+    .select(`
+      id,
+      status_emoji,
+      status_text,
+      created_at,
+      profile:profiles!status_history_user_id_fkey(id, name)
+    `)
+    .in('user_id', connectedFriendIds)
+    .order('created_at', { ascending: false })
+    .limit(15);
+
+  if (error) throw error;
+  return data || [];
 }
 
 /**
@@ -381,6 +404,53 @@ export async function removeConnection(connectionId) {
     .delete()
     .eq('id', connectionId);
   if (error) throw error;
+}
+
+/* ==========================================
+   PUSH SUBSCRIPTIONS
+   ========================================== */
+
+/**
+ * Save a Web Push subscription to the database.
+ */
+export async function savePushSubscription(subscription) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const subJson = subscription.toJSON();
+
+  const { error } = await client()
+    .from('push_subscriptions')
+    .upsert({
+      user_id: user.id,
+      subscription: subJson,
+      endpoint: subJson.endpoint
+    }, { onConflict: 'user_id,endpoint' });
+
+  if (error) throw error;
+}
+
+/**
+ * Notify friends via Edge Function after a status update.
+ */
+export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
+  try {
+    const supabaseUrl = localStorage.getItem('pulse_supabase_url')
+      || import.meta.env.VITE_SUPABASE_URL;
+    const anonKey = localStorage.getItem('pulse_supabase_anon_key')
+      || import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    await fetch(`${supabaseUrl}/functions/v1/notify-friends`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${anonKey}`
+      },
+      body: JSON.stringify({ userId, name, emoji, statusText })
+    });
+  } catch (err) {
+    console.warn('[Pulse] Push notification failed:', err.message);
+  }
 }
 
 /* ==========================================

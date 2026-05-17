@@ -193,3 +193,20 @@ drop trigger if exists on_status_history_insert on public.status_history;
 create trigger on_status_history_insert
   after insert on public.status_history
   for each row execute procedure public.trim_status_history();
+
+-- 8. PUSH SUBSCRIPTIONS TABLE
+-- Stores Web Push subscriptions for background notifications
+create table if not exists public.push_subscriptions (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  subscription jsonb not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique (user_id, (subscription->>'endpoint'))
+);
+
+alter table public.push_subscriptions enable row level security;
+
+create policy "Users manage own push subscriptions"
+on public.push_subscriptions for all to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);

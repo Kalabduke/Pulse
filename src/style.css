@@ -1506,3 +1506,87 @@ p {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ==========================================
+   CUSTOM MODALS (replaces browser prompt/confirm)
+   ========================================== */
+.custom-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9998;
+  padding: 24px;
+  animation: fadeIn 0.2s ease;
+}
+
+.custom-modal-box {
+  background: hsl(var(--bg-surface));
+  border: 1px solid var(--border-glow);
+  border-radius: 24px;
+  padding: 28px 24px;
+  width: 100%;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.custom-modal-icon {
+  font-size: 36px;
+  text-align: center;
+}
+
+.custom-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  text-align: center;
+  color: hsl(var(--text-primary));
+}
+
+.custom-modal-body {
+  font-size: 14px;
+  text-align: center;
+  color: hsl(var(--text-secondary));
+  line-height: 1.5;
+}
+
+.custom-modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* Danger solid button for destructive actions */
+.btn-danger-solid {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+  color: white;
+  box-shadow: 0 4px 15px rgba(239,68,68,0.3);
+}
+
+.btn-danger-solid:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(239,68,68,0.5);
+}
+
+/* ==========================================
+   HISTORY ITEM — friend name
+   ========================================== */
+.history-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #a5b4fc;
+}
+
+.history-details {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}

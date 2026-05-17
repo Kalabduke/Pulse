@@ -11,11 +11,14 @@ import {
   updateStatus,
   fetchConnections,
   fetchStatusHistory,
+  fetchFriendsStatusHistory,
   sendConnectionRequest,
   setConnectionNickname,
   acceptInvitation,
   removeConnection,
-  subscribeToPulseSync
+  subscribeToPulseSync,
+  savePushSubscription,
+  notifyFriendsOfUpdate
 } from './supabase.js';
 
 /* ==========================================
@@ -26,8 +29,9 @@ const state = {
   connections: [],
   selectedEmoji: '😊',
   realtimeChannel: null,
-  authMode: 'signin',   // 'signin' | 'signup'
-  clockInterval: null
+  authMode: 'signin',
+  clockInterval: null,
+  pollInterval: null       // iOS fallback polling
 };
 
 /* ==========================================
@@ -73,6 +77,21 @@ async function checkNavigationState() {
     return;
   }
 
+  // Handle email confirmation redirect — Supabase puts tokens in the URL hash
+  const hash = window.location.hash;
+  if (hash && hash.includes('access_token')) {
+    // User clicked the confirmation link — session is now active
+    // Clear the hash from the URL cleanly
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
+  // Handle error in URL (e.g. expired magic link)
+  const params = new URLSearchParams(window.location.search);
+  const urlError = params.get('error_description') || params.get('error');
+  if (urlError) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
   try {
     const profile = await getSessionAndProfile();
 
@@ -83,14 +102,19 @@ async function checkNavigationState() {
       setupRealtimeSync();
       await loadDashboardData();
       startSimulatorClock();
+      startPollingFallback();
     } else {
       navigateTo('auth');
       setAuthMode('signin');
+      // Show a success message if they just confirmed their email
+      if (hash && hash.includes('access_token')) {
+        showToast('Email confirmed! You are now signed in. 🎉');
+      }
     }
   } catch (err) {
     console.error('[Pulse] Navigation check error:', err);
     navigateTo('auth');
-    showAuthEmailStep();
+    setAuthMode('signin');
   }
 }
 
@@ -202,10 +226,13 @@ async function loadDashboardData() {
     renderFriendsFeed();
     renderPendingInvites();
 
-    // Load status history for current user
+    // Load friends' status history (not own)
     if (state.userProfile) {
-      const history = await fetchStatusHistory(state.userProfile.id);
-      renderStatusHistory(history);
+      const connectedFriendIds = state.connections
+        .filter(c => c.status === 'connected')
+        .map(c => c.friendId);
+      const history = await fetchFriendsStatusHistory(connectedFriendIds);
+      renderStatusHistory(history, state.connections);
     }
   } catch (err) {
     console.error('[Pulse] Dashboard load error:', err);
@@ -387,10 +414,7 @@ function renderFriendsFeed() {
       const currentNickname = btn.dataset.currentNickname;
       const realName = btn.dataset.realName;
 
-      const input = prompt(
-        `Nickname for "${realName}"\nLeave empty to use their real name:`,
-        currentNickname
-      );
+      const input = await showNicknameModal({ realName, currentNickname });
       if (input === null) return; // cancelled
 
       try {
@@ -406,7 +430,14 @@ function renderFriendsFeed() {
   container.querySelectorAll('.remove-connection-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const connId = btn.dataset.connId;
-      if (!confirm('Disconnect this friend? They will no longer see your status.')) return;
+      const confirmed = await showConfirmModal({
+        icon: '💔',
+        title: 'Disconnect friend?',
+        body: 'They will no longer see your status and you won\'t see theirs.',
+        okLabel: 'Disconnect',
+        okDanger: true
+      });
+      if (!confirmed) return;
       try {
         await removeConnection(connId);
         showToast('Friend disconnected.');
@@ -500,26 +531,136 @@ function renderPendingInvites() {
 }
 
 /* ==========================================
-   STATUS HISTORY RENDERER
+   STATUS HISTORY RENDERER (friends' history)
    ========================================== */
-function renderStatusHistory(history) {
+function renderStatusHistory(history, connections = []) {
   const container = document.getElementById('status-history-container');
   if (!container) return;
 
   if (!history || history.length === 0) {
-    container.innerHTML = `<div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No history yet. Update your status to start tracking.</div>`;
+    container.innerHTML = `<div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No history yet — connect with friends and their updates will appear here.</div>`;
     return;
   }
 
-  container.innerHTML = history.map(entry => `
-    <div class="history-item">
-      <span class="history-emoji">${entry.status_emoji}</span>
-      <div class="history-details">
-        <span class="history-text">"${escapeHtml(entry.status_text)}"</span>
-        <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
+  container.innerHTML = history.map(entry => {
+    const realName = entry.profile?.name || 'Unknown';
+    // Use nickname if set
+    const conn = connections.find(c => c.friendId === entry.profile?.id);
+    const displayName = conn?.nickname?.trim() || realName;
+
+    return `
+      <div class="history-item">
+        <span class="history-emoji">${entry.status_emoji}</span>
+        <div class="history-details">
+          <span class="history-name">${escapeHtml(displayName)}</span>
+          <span class="history-text">"${escapeHtml(entry.status_text)}"</span>
+          <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
+        </div>
       </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+}
+
+/* ==========================================
+   CUSTOM MODAL HELPERS (replaces prompt/confirm)
+   ========================================== */
+function showConfirmModal({ icon = '⚠️', title, body, okLabel = 'Confirm', okDanger = true }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('custom-confirm-modal');
+    document.getElementById('confirm-modal-icon').textContent = icon;
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-body').textContent = body;
+    const okBtn = document.getElementById('confirm-modal-ok');
+    okBtn.textContent = okLabel;
+    okBtn.className = `btn ${okDanger ? 'btn-danger-solid' : 'btn-primary'}`;
+
+    modal.style.display = 'flex';
+
+    const cleanup = (result) => {
+      modal.style.display = 'none';
+      okBtn.replaceWith(okBtn.cloneNode(true));
+      document.getElementById('confirm-modal-cancel').replaceWith(
+        document.getElementById('confirm-modal-cancel').cloneNode(true)
+      );
+      resolve(result);
+    };
+
+    document.getElementById('confirm-modal-ok').addEventListener('click', () => cleanup(true), { once: true });
+    document.getElementById('confirm-modal-cancel').addEventListener('click', () => cleanup(false), { once: true });
+  });
+}
+
+function showNicknameModal({ realName, currentNickname = '' }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('nickname-modal');
+    document.getElementById('nickname-modal-body').textContent =
+      `Give "${realName}" a nickname only you can see. Leave empty to use their real name.`;
+    const input = document.getElementById('nickname-modal-input');
+    input.value = currentNickname;
+
+    modal.style.display = 'flex';
+    setTimeout(() => input.focus(), 100);
+
+    const cleanup = (result) => {
+      modal.style.display = 'none';
+      resolve(result);
+    };
+
+    const saveBtn = document.getElementById('nickname-modal-save');
+    const cancelBtn = document.getElementById('nickname-modal-cancel');
+
+    const onSave = () => {
+      saveBtn.removeEventListener('click', onSave);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      cleanup(input.value);
+    };
+    const onCancel = () => {
+      saveBtn.removeEventListener('click', onSave);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      cleanup(null);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Enter') onSave();
+      if (e.key === 'Escape') onCancel();
+    };
+
+    saveBtn.addEventListener('click', onSave);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
+/* ==========================================
+   iOS POLLING FALLBACK
+   Supabase Realtime WebSockets get suspended on iOS
+   when the app is backgrounded. Poll every 30s as fallback.
+   ========================================== */
+function startPollingFallback() {
+  if (state.pollInterval) clearInterval(state.pollInterval);
+
+  // Only poll on iOS Safari / PWA
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  if (!isIOS) return;
+
+  state.pollInterval = setInterval(async () => {
+    // Only poll if realtime channel is not SUBSCRIBED
+    const channelStatus = state.realtimeChannel?.state;
+    if (channelStatus !== 'joined') {
+      console.log('[Pulse] iOS polling fallback triggered');
+      await loadDashboardData();
+    }
+  }, 30000); // every 30 seconds
+
+  // Also reload when app comes back to foreground
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && state.userProfile) {
+      await loadDashboardData();
+    }
+  });
 }
 
 /* ==========================================
@@ -566,25 +707,73 @@ function requestNotificationPermission() {
     <span style="font-size: 18px; color: hsl(var(--text-muted));">→</span>
   `;
 
-  banner.addEventListener('click', () => {
-    Notification.requestPermission().then(permission => {
-      banner.remove();
-      if (permission === 'granted') {
-        showToast('Lockscreen alerts enabled! 🔔');
-        // Show a test notification so user sees it works
-        setTimeout(() => {
-          new Notification('Pulse is ready! 💫', {
-            body: 'You\'ll be notified when friends update their status.',
-            icon: '/logo.svg',
-            badge: '/notification-icon.png'
-          });
-        }, 500);
-      }
-    });
+  banner.addEventListener('click', async () => {
+    const permission = await Notification.requestPermission();
+    banner.remove();
+
+    if (permission === 'granted') {
+      showToast('Lockscreen alerts enabled! 🔔');
+
+      // Subscribe to Web Push for background notifications
+      await subscribeToPushNotifications();
+
+      // Show a test notification
+      setTimeout(() => {
+        new Notification('Pulse is ready! 💫', {
+          body: "You'll be notified when friends update their status.",
+          icon: '/icon-192.png',
+          badge: '/notification-icon.png'
+        });
+      }, 500);
+    }
   });
 
   const header = dashboard.querySelector('.header');
   if (header) header.insertAdjacentElement('afterend', banner);
+}
+
+/**
+ * Subscribe to Web Push and save the subscription to Supabase.
+ * This enables background notifications even when the app is closed.
+ */
+async function subscribeToPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+
+    // Check if already subscribed
+    let subscription = await reg.pushManager.getSubscription();
+
+    if (!subscription) {
+      // VAPID public key — must match the private key set in Supabase Edge Function secrets
+      const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+
+      if (!VAPID_PUBLIC_KEY) {
+        console.warn('[Pulse] VAPID_PUBLIC_KEY not set — background push disabled');
+        return;
+      }
+
+      const keyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: keyBytes
+      });
+    }
+
+    // Save to Supabase
+    await savePushSubscription(subscription);
+    console.log('[Pulse] Push subscription saved');
+  } catch (err) {
+    console.warn('[Pulse] Push subscription failed:', err.message);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
 /**
@@ -745,20 +934,54 @@ function initEventListeners() {
       if (state.authMode === 'signin') {
         await signInWithPassword(email, password);
         showToast('Welcome back!');
+        await checkNavigationState();
       } else {
         const result = await signUpWithPassword(email, password, name);
-        // If email confirmation is enabled, Supabase returns a user but no session
+        // Email confirmation required — Supabase returns user but no session
         if (result.user && !result.session) {
-          showAuthError('Check your email to confirm your account, then sign in.');
-          setAuthMode('signin');
-          setButtonLoading(btnAuthSubmit, false, 'Sign In');
+          // Show a clear confirmation screen
+          showAuthError('');
+          const card = document.getElementById('auth-email-card') || document.querySelector('.auth-form-card');
+          if (card) {
+            card.innerHTML = `
+              <div style="text-align: center; display: flex; flex-direction: column; gap: 16px; padding: 8px 0;">
+                <div style="font-size: 48px;">📬</div>
+                <h2 style="font-size: 20px;">Check your email</h2>
+                <p style="font-size: 14px; color: hsl(var(--text-secondary)); line-height: 1.6;">
+                  We sent a confirmation link to<br>
+                  <strong style="color: #a5b4fc;">${escapeHtml(email)}</strong>
+                </p>
+                <p style="font-size: 13px; color: hsl(var(--text-muted)); line-height: 1.5;">
+                  Click the link in the email to verify your account, then come back and sign in.
+                </p>
+                <button id="btn-back-to-signin" class="btn btn-primary">
+                  <span>Go to Sign In</span>
+                </button>
+              </div>
+            `;
+            document.getElementById('btn-back-to-signin')?.addEventListener('click', () => {
+              // Reload auth view cleanly
+              navigateTo('auth');
+              setAuthMode('signin');
+            });
+          }
           return;
         }
-        showToast('Account created!');
+        showToast('Account created! Welcome to Pulse 🎉');
+        await checkNavigationState();
       }
-      await checkNavigationState();
     } catch (err) {
-      showAuthError(err.message || 'Authentication failed.');
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
+        showAuthError('Please confirm your email first. Check your inbox for the verification link.');
+      } else if (msg.toLowerCase().includes('invalid login credentials')) {
+        showAuthError('Incorrect email or password. Please try again.');
+      } else if (msg.toLowerCase().includes('user already registered')) {
+        showAuthError('An account with this email already exists. Try signing in instead.');
+        setAuthMode('signin');
+      } else {
+        showAuthError(msg || 'Something went wrong. Please try again.');
+      }
     } finally {
       setButtonLoading(btnAuthSubmit, false, state.authMode === 'signin' ? 'Sign In' : 'Create Account');
     }
@@ -773,7 +996,14 @@ function initEventListeners() {
 
   // ── Dashboard: Sign out ────────────────────────────────────────────
   document.getElementById('btn-signout')?.addEventListener('click', async () => {
-    if (!confirm('Sign out of Pulse?')) return;
+    const confirmed = await showConfirmModal({
+      icon: '👋',
+      title: 'Sign out?',
+      body: 'You will be signed out of Pulse.',
+      okLabel: 'Sign Out',
+      okDanger: false
+    });
+    if (!confirmed) return;
     try {
       await signOutUser();
       state.userProfile = null;
@@ -781,6 +1011,7 @@ function initEventListeners() {
       state.realtimeChannel?.unsubscribe();
       state.realtimeChannel = null;
       clearInterval(state.clockInterval);
+      clearInterval(state.pollInterval);
       showToast('Signed out.');
       checkNavigationState();
     } catch (err) {
@@ -839,6 +1070,14 @@ function initEventListeners() {
       showToast('Status updated!');
       updateMyStatusUI();
       updateSimulatorUI();
+
+      // Notify friends via server-side push (works when their app is closed)
+      notifyFriendsOfUpdate(
+        state.userProfile.id,
+        name,
+        state.selectedEmoji,
+        text || 'Available'
+      );
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
