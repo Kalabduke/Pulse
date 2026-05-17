@@ -1,3 +1,4 @@
+import { inject } from '@vercel/analytics';
 import {
   initSupabase,
   isSupabaseConfigured,
@@ -20,6 +21,9 @@ import {
   savePushSubscription,
   notifyFriendsOfUpdate
 } from './supabase.js';
+
+// ── Initialize Vercel Web Analytics ──
+inject();
 
 // ── Clean URL immediately — remove tokens/codes before anything renders ──
 // Save them first so getSessionAndProfile can still use them
