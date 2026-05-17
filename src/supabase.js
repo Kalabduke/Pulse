@@ -445,12 +445,12 @@ export async function savePushSubscription(subscription) {
 
   const subJson = subscription.toJSON();
 
+  // Don't insert endpoint — it's a generated column derived from subscription jsonb
   const { error } = await client()
     .from('push_subscriptions')
     .upsert({
       user_id: user.id,
-      subscription: subJson,
-      endpoint: subJson.endpoint
+      subscription: subJson
     }, { onConflict: 'user_id,endpoint' });
 
   if (error) throw error;
