@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Pulse - Real-time Status Updates</title>
+  
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="Real-time emotional & health status updates on your lock screen & notifications with close friends.">
+  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#6366f1">
+  
+  <!-- Premium Style sheet -->
+  <link rel="stylesheet" href="/src/style.css">
+  
+  <!-- iOS support -->
+  <link rel="apple-touch-icon" href="/logo.svg">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+</head>
+<body>
+
+  <!-- App Wrapper (Mobile-constrained frame) -->
+  <div id="app-root">
+    
+    <!-- ==========================================
+         1. SUPABASE CONFIGURATION VIEW
+         ========================================== -->
+    <div id="config-view" class="view-container config-view-layout" style="display: none;">
+
+      <!-- Centered content wrapper -->
+      <div class="config-center-wrap">
+
+        <!-- Branding -->
+        <div class="auth-header-container">
+          <div class="logo-glow-ring">
+            <img src="/logo.svg" alt="Pulse Logo" class="logo-img" style="width: 64px; height: 64px;">
+          </div>
+          <h1 class="auth-headline" style="font-size: 28px; margin-top: 14px;">Configure Pulse</h1>
+          <p class="auth-tagline" style="margin-top: 8px; font-size: 14px;">
+            Connect your free Supabase backend to enable real-time status sync with friends.
+          </p>
+        </div>
+
+        <!-- Steps hint -->
+        <div class="config-steps">
+          <div class="config-step">
+            <span class="config-step-num">1</span>
+            <span>Create a free project at <a href="https://supabase.com" target="_blank" class="link">supabase.com</a></span>
+          </div>
+          <div class="config-step">
+            <span class="config-step-num">2</span>
+            <span>Run <code class="inline-code">supabase_setup.sql</code> in the SQL Editor</span>
+          </div>
+          <div class="config-step">
+            <span class="config-step-num">3</span>
+            <span>Paste your <strong>Project URL</strong> &amp; <strong>anon key</strong> below</span>
+          </div>
+        </div>
+
+        <!-- Credentials form -->
+        <div class="glass-card auth-form-card">
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label class="field-label">SUPABASE PROJECT URL</label>
+            <input type="text" id="config-url" class="input-field" placeholder="https://xxxx.supabase.co" autocomplete="off" spellcheck="false">
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <label class="field-label">SUPABASE ANON KEY</label>
+            <div style="position: relative;">
+              <input type="password" id="config-key" class="input-field" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." autocomplete="off" spellcheck="false" style="padding-right: 48px;">
+              <button id="btn-toggle-key-visibility" type="button" class="input-eye-btn" title="Show / hide key">👁</button>
+            </div>
+          </div>
+
+          <button id="btn-save-config" class="btn btn-primary" style="margin-top: 4px; width: 100%;">
+            <span>Save &amp; Connect</span>
+          </button>
+        </div>
+
+        <!-- Footer note -->
+        <p style="font-size: 11px; color: hsl(var(--text-muted)); text-align: center; line-height: 1.6; margin-top: 4px;">
+          Your credentials are stored only in your browser's localStorage and never sent anywhere except directly to your own Supabase project.
+        </p>
+
+      </div>
+    </div>
+
+    <!-- ==========================================
+         2. AUTHENTICATION VIEW
+         ========================================== -->
+    <div id="auth-view" class="view-container" style="display: none;">
+      <div class="auth-container">
+
+        <!-- Branding -->
+        <div class="auth-header-container">
+          <div class="logo-glow-ring">
+            <img src="/logo.svg" alt="Pulse Logo" class="logo-img" style="width: 52px; height: 52px;">
+          </div>
+          <h1 class="auth-headline">Pulse</h1>
+          <p class="auth-tagline">Real-time status sharing for close friends.</p>
+        </div>
+
+        <!-- Tab switcher: Sign In / Sign Up -->
+        <div class="auth-tab-bar">
+          <button id="tab-signin" class="auth-tab active">Sign In</button>
+          <button id="tab-signup" class="auth-tab">Create Account</button>
+        </div>
+
+        <!-- Auth form card -->
+        <div class="glass-card auth-form-card">
+
+          <!-- Google OAuth -->
+          <button id="btn-google-auth" class="btn btn-oauth">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+              <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+              <path d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+              <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+            </svg>
+            <span>Continue with Google</span>
+          </button>
+
+          <!-- Divider -->
+          <div class="auth-divider">
+            <span>or</span>
+          </div>
+
+          <!-- Email field (shared) -->
+          <div class="field-group">
+            <label class="field-label">EMAIL</label>
+            <input type="email" id="auth-email" class="input-field" placeholder="name@example.com" autocomplete="email" required>
+          </div>
+
+          <!-- Password field (shared) -->
+          <div class="field-group">
+            <label class="field-label">PASSWORD</label>
+            <div style="position: relative;">
+              <input type="password" id="auth-password" class="input-field" placeholder="••••••••" autocomplete="current-password" style="padding-right: 48px;">
+              <button type="button" class="input-eye-btn" id="btn-toggle-password">👁</button>
+            </div>
+          </div>
+
+          <!-- Name field — Sign Up only -->
+          <div class="field-group" id="field-name" style="display: none;">
+            <label class="field-label">DISPLAY NAME</label>
+            <input type="text" id="auth-name" class="input-field" placeholder="How friends will see you" autocomplete="name">
+          </div>
+
+          <!-- Confirm password — Sign Up only -->
+          <div class="field-group" id="field-confirm" style="display: none;">
+            <label class="field-label">CONFIRM PASSWORD</label>
+            <div style="position: relative;">
+              <input type="password" id="auth-password-confirm" class="input-field" placeholder="••••••••" autocomplete="new-password" style="padding-right: 48px;">
+              <button type="button" class="input-eye-btn" id="btn-toggle-confirm">👁</button>
+            </div>
+          </div>
+
+          <!-- Forgot password — Sign In only -->
+          <div id="link-forgot" style="text-align: right; margin-top: -8px;">
+            <button id="btn-forgot-password" class="btn-text-link">Forgot password?</button>
+          </div>
+
+          <!-- Error message -->
+          <div id="auth-error-msg" style="display:none;" class="auth-error-box"></div>
+
+          <!-- Submit button -->
+          <button id="btn-auth-submit" class="btn btn-primary" style="width: 100%; margin-top: 4px;">
+            <span id="btn-auth-label">Sign In</span>
+          </button>
+
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==========================================
+         3. MAIN APP DASHBOARD VIEW
+         ========================================== -->
+    <div id="dashboard-view" class="view-container" style="display: none;">
+      
+      <!-- Premium App Header -->
+      <header class="header">
+        <div class="logo-container">
+          <img src="/logo.svg" alt="Pulse Logo" class="logo-img">
+          <h1 class="app-title">Pulse</h1>
+        </div>
+        <div style="display: flex; gap: 8px; position: relative;">
+          <button id="btn-signout" class="btn btn-secondary" style="padding: 8px 16px; font-size: 13px;">Sign Out</button>
+        </div>
+      </header>
+
+      <!-- Main Dashboard Grid -->
+      <div class="dashboard-grid">
+        
+        <!-- Own Status Card (Top highlight) -->
+        <div class="glass-card" style="border-left: 4px solid hsl(var(--primary)); background: rgba(99, 102, 241, 0.04);">
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div class="avatar-container" style="background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3);">
+                <span id="my-avatar">👋</span>
+                <span class="online-pulse-dot"></span>
+              </div>
+              <div class="status-details">
+                <div class="status-user-name">
+                  <span id="my-name">My Status</span>
+                  <span class="tag">You</span>
+                </div>
+                <div id="my-status-bubble" class="status-bubble">"Just set up my Pulse status!"</div>
+              </div>
+            </div>
+            
+            <button id="btn-open-status-modal" class="btn btn-secondary btn-small" style="background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); font-weight: 700; color: #a5b4fc;">
+              Update
+            </button>
+          </div>
+          
+          <!-- Share User ID Panel for connections -->
+          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span style="font-size: 11px; color: hsl(var(--text-muted)); word-break: break-all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              My Pulse ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: #a5b4fc;">Loading...</strong>
+            </span>
+            <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 8px; font-size: 10px;">Copy</button>
+          </div>
+        </div>
+
+        <!-- Connected Friends Status Feed -->
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
+          <h2 style="font-size: 18px; display: flex; align-items: center; gap: 8px;">
+            <span>Friends Updates</span>
+            <span id="connected-count" style="font-size: 12px; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 10px; color: hsl(var(--text-secondary));">0/5</span>
+          </h2>
+          
+          <div id="friends-status-container" style="display: flex; flex-direction: column; gap: 12px;">
+            <!-- Friends statuses will render here in real-time -->
+            <div class="glass-card" style="text-align: center; padding: 32px 16px; color: hsl(var(--text-muted)); font-style: italic;">
+              <span style="font-size: 32px; display: block; margin-bottom: 8px;">👉</span>
+              No connected friends yet. Invite someone below to see their real-time emotional status on your lockscreen!
+            </div>
+          </div>
+        </div>
+
+        <!-- Connections & Invites Manager Panel -->
+        <div class="glass-card" style="margin-top: 8px;">
+          <h3 style="font-size: 16px; margin-bottom: 12px; color: #a5b4fc; display: flex; align-items: center; gap: 8px;">
+            <span>Connect with Friends</span>
+          </h3>
+
+          <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+            <input type="text" id="friend-id-input" class="input-field" placeholder="Enter Friend's Pulse ID or Name" style="font-size: 13px; padding: 10px 12px;">
+            <button id="btn-send-invite" class="btn btn-primary btn-small" style="padding: 10px 16px; border-radius: 12px; font-weight: 600;">
+              Connect
+            </button>
+          </div>
+
+          <div class="connections-section">
+            <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--text-muted)); margin-bottom: 6px;">
+              Pending Invites
+            </h4>
+            <div id="pending-invites-container" class="friends-list">
+              <!-- Pending invites render here -->
+              <div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No pending requests.</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==========================================
+         4. OVERLAY / MODAL FOR STATUS UPDATE
+         ========================================== -->
+    <div id="status-modal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 style="font-size: 20px;">Update Status</h2>
+          <button id="btn-close-status-modal" class="btn btn-secondary" style="padding: 6px 12px; border-radius: 8px;">✕</button>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <!-- Custom Status Name Input -->
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">MY DISPLAY NAME</label>
+            <input type="text" id="status-name-input" class="input-field" placeholder="Your name">
+          </div>
+
+          <!-- Emoji Picker Selection -->
+          <div>
+            <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">SELECT EMOJI STATUS</label>
+
+            <!-- Custom emoji input -->
+            <div class="emoji-custom-row">
+              <div class="emoji-preview-box" id="emoji-preview">😊</div>
+              <input
+                type="text"
+                id="emoji-custom-input"
+                class="input-field"
+                placeholder="Type or paste any emoji..."
+                maxlength="8"
+                style="flex: 1; font-size: 20px;"
+              >
+            </div>
+
+            <!-- Category tabs -->
+            <div class="emoji-category-tabs" id="emoji-category-tabs">
+              <button class="emoji-cat-tab active" data-cat="mood">😊 Mood</button>
+              <button class="emoji-cat-tab" data-cat="health">❤️ Health</button>
+              <button class="emoji-cat-tab" data-cat="activity">🎯 Activity</button>
+              <button class="emoji-cat-tab" data-cat="nature">🌿 Nature</button>
+              <button class="emoji-cat-tab" data-cat="food">🍕 Food</button>
+              <button class="emoji-cat-tab" data-cat="travel">✈️ Travel</button>
+            </div>
+
+            <!-- Emoji grid (populated by JS) -->
+            <div class="emoji-grid" id="emoji-grid"></div>
+          </div>
+
+          <!-- Custom Status Text Input -->
+          <div style="display: flex; flex-direction: column; gap: 6px;">
+            <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">STATUS TEXT (WHAT'S HAPPENING?)</label>
+            <input type="text" id="status-text-input" class="input-field" placeholder="e.g., Coding deep, Feeling energized, Resting...">
+          </div>
+
+          <button id="btn-save-status" class="btn btn-primary" style="margin-top: 8px;">
+            <span>Save & Pulse Out!</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Global Floating Toast Notification -->
+  <div id="global-toast" class="toast">
+    <span id="toast-icon">✨</span>
+    <span id="toast-text">Success message goes here</span>
+  </div>
+
+  <!-- Load Style & Main Code -->
+  <script type="module" src="/src/main.js"></script>
+
+</body>
+</html>

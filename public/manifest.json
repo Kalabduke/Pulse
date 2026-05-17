@@ -1,0 +1,24 @@
+{
+  "name": "Pulse Status App",
+  "short_name": "Pulse",
+  "description": "Real-time emotional & health status updates for close friends.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c0d12",
+  "theme_color": "#6366f1",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
