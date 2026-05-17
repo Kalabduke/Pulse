@@ -77,21 +77,6 @@ async function checkNavigationState() {
     return;
   }
 
-  // Handle email confirmation redirect — Supabase puts tokens in the URL hash
-  const hash = window.location.hash;
-  if (hash && hash.includes('access_token')) {
-    // User clicked the confirmation link — session is now active
-    // Clear the hash from the URL cleanly
-    window.history.replaceState(null, '', window.location.pathname);
-  }
-
-  // Handle error in URL (e.g. expired magic link)
-  const params = new URLSearchParams(window.location.search);
-  const urlError = params.get('error_description') || params.get('error');
-  if (urlError) {
-    window.history.replaceState(null, '', window.location.pathname);
-  }
-
   try {
     const profile = await getSessionAndProfile();
 
@@ -103,13 +88,10 @@ async function checkNavigationState() {
       await loadDashboardData();
       startSimulatorClock();
       startPollingFallback();
+      setTimeout(requestNotificationPermission, 3000);
     } else {
       navigateTo('auth');
       setAuthMode('signin');
-      // Show a success message if they just confirmed their email
-      if (hash && hash.includes('access_token')) {
-        showToast('Email confirmed! You are now signed in. 🎉');
-      }
     }
   } catch (err) {
     console.error('[Pulse] Navigation check error:', err);
@@ -1042,9 +1024,9 @@ function initEventListeners() {
     document.getElementById('status-modal')?.classList.remove('show');
   });
 
-  // Close modal on backdrop click
+  // Close modal on backdrop click — only if clicking the dark overlay itself
   document.getElementById('status-modal')?.addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
+    if (e.target.id === 'status-modal') {
       e.currentTarget.classList.remove('show');
     }
   });
@@ -1161,10 +1143,7 @@ function setButtonLoading(btn, loading, label) {
 document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
   initEventListeners();
-  checkNavigationState().then(() => {
-    // Show notification permission banner after a short delay
-    setTimeout(requestNotificationPermission, 3000);
-  });
+  checkNavigationState();
 });
 
 /* ==========================================

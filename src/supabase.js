@@ -127,8 +127,45 @@ export async function signOutUser() {
  * Falls back to partial auth metadata if the DB trigger hasn't fired yet.
  */
 export async function getSessionAndProfile() {
-  const { data: { session }, error: sessionError } = await client().auth.getSession();
+  // First try to get session normally
+  let { data: { session }, error: sessionError } = await client().auth.getSession();
   if (sessionError) throw sessionError;
+
+  // If no session, try exchanging code from URL (PKCE flow for email confirmation)
+  if (!session) {
+    const hash = window.location.hash;
+    const params = new URLSearchParams(window.location.search);
+    
+    // Handle token hash from email confirmation
+    if (hash && hash.includes('access_token')) {
+      const hashParams = new URLSearchParams(hash.substring(1));
+      const accessToken = hashParams.get('access_token');
+      const refreshToken = hashParams.get('refresh_token');
+      
+      if (accessToken) {
+        const { data, error } = await client().auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken || ''
+        });
+        if (!error && data.session) {
+          session = data.session;
+          // Clean URL
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+      }
+    }
+    
+    // Handle code param (PKCE)
+    const code = params.get('code');
+    if (code) {
+      const { data, error } = await client().auth.exchangeCodeForSession(code);
+      if (!error && data.session) {
+        session = data.session;
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+  }
+
   if (!session) return null;
 
   const user = session.user;
