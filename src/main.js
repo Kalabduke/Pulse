@@ -1030,8 +1030,21 @@ function initEventListeners() {
   });
 
   // ── Status Modal: Open ─────────────────────────────────────────────
-  document.getElementById('btn-open-status-modal')?.addEventListener('click', () => {
-    if (!state.userProfile) return;
+  document.getElementById('btn-open-status-modal')?.addEventListener('click', async () => {
+    // If profile not loaded yet, try to fetch it
+    if (!state.userProfile) {
+      try {
+        const profile = await getSessionAndProfile(_savedHash, _savedSearch);
+        if (profile) state.userProfile = profile;
+      } catch (e) {
+        showToast('Could not load profile. Please refresh.', 'error');
+        return;
+      }
+    }
+    if (!state.userProfile) {
+      showToast('Profile not loaded. Please refresh the page.', 'error');
+      return;
+    }
 
     const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');

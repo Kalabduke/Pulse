@@ -466,7 +466,7 @@ export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
     const anonKey = localStorage.getItem('pulse_supabase_anon_key')
       || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    await fetch(`${supabaseUrl}/functions/v1/notify-friends`, {
+    await fetch(`${supabaseUrl}/functions/v1/bright-processor`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
