@@ -10,6 +10,7 @@ import {
   getSessionAndProfile,
   updateStatus,
   fetchConnections,
+  fetchStatusHistory,
   sendConnectionRequest,
   setConnectionNickname,
   acceptInvitation,
@@ -164,7 +165,16 @@ function setupRealtimeSync() {
           c => c.friendId === updatedId && c.status === 'connected'
         );
         if (isFriend) {
-          showToast(`${change.record.name || 'A friend'} updated their status!`);
+          // Find the friend's display name (nickname or real name)
+          const friend = state.connections.find(c => c.friendId === updatedId);
+          const displayName = friend?.nickname?.trim() || change.record.name || 'A friend';
+          const emoji = change.record.status_emoji || '💫';
+          const text = change.record.status_text || 'Updated their status';
+
+          // Show lockscreen notification
+          notifyFriendStatusUpdate(displayName, emoji, text);
+
+          showToast(`${emoji} ${displayName} updated their status!`);
           await loadDashboardData();
         }
       }
@@ -191,6 +201,12 @@ async function loadDashboardData() {
 
     renderFriendsFeed();
     renderPendingInvites();
+
+    // Load status history for current user
+    if (state.userProfile) {
+      const history = await fetchStatusHistory(state.userProfile.id);
+      renderStatusHistory(history);
+    }
   } catch (err) {
     console.error('[Pulse] Dashboard load error:', err);
     showToast('Failed to sync. Check your connection.', 'error');
@@ -484,6 +500,29 @@ function renderPendingInvites() {
 }
 
 /* ==========================================
+   STATUS HISTORY RENDERER
+   ========================================== */
+function renderStatusHistory(history) {
+  const container = document.getElementById('status-history-container');
+  if (!container) return;
+
+  if (!history || history.length === 0) {
+    container.innerHTML = `<div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No history yet. Update your status to start tracking.</div>`;
+    return;
+  }
+
+  container.innerHTML = history.map(entry => `
+    <div class="history-item">
+      <span class="history-emoji">${entry.status_emoji}</span>
+      <div class="history-details">
+        <span class="history-text">"${escapeHtml(entry.status_text)}"</span>
+        <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+/* ==========================================
    SECURITY HELPER
    ========================================== */
 function escapeHtml(str) {
@@ -512,11 +551,11 @@ function registerServiceWorker() {
 function requestNotificationPermission() {
   if (!('Notification' in window) || Notification.permission !== 'default') return;
 
-  // Show a subtle in-app banner instead of immediately prompting
   const dashboard = document.getElementById('dashboard-view');
   if (!dashboard) return;
 
   const banner = document.createElement('div');
+  banner.id = 'notif-banner';
   banner.className = 'notif-banner';
   banner.innerHTML = `
     <span style="font-size: 20px;">🔔</span>
@@ -531,16 +570,59 @@ function requestNotificationPermission() {
     Notification.requestPermission().then(permission => {
       banner.remove();
       if (permission === 'granted') {
-        showToast('Lockscreen alerts enabled!');
+        showToast('Lockscreen alerts enabled! 🔔');
+        // Show a test notification so user sees it works
+        setTimeout(() => {
+          new Notification('Pulse is ready! 💫', {
+            body: 'You\'ll be notified when friends update their status.',
+            icon: '/logo.svg',
+            badge: '/notification-icon.png'
+          });
+        }, 500);
       }
     });
   });
 
-  // Insert after the header
   const header = dashboard.querySelector('.header');
-  if (header) {
-    header.insertAdjacentElement('afterend', banner);
+  if (header) header.insertAdjacentElement('afterend', banner);
+}
+
+/**
+ * Sends FRIEND_STATUS_UPDATE to the SW which shows:
+ *   1. A pop-up heads-up banner (like Telegram/Snapchat)
+ *   2. A persistent summary notification that stays on the lockscreen
+ */
+function showPersistentStatusNotification(friendName, emoji, statusText) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({
+      type: 'FRIEND_STATUS_UPDATE',
+      friendName,
+      emoji,
+      statusText,
+      url: '/'
+    });
+  } else {
+    // Fallback direct notification
+    new Notification(`${emoji} ${friendName}`, {
+      body: `"${statusText}"`,
+      icon: '/icon-192.png',
+      badge: '/notification-icon.png',
+      vibrate: [200, 100, 200],
+      tag: `pulse-popup-${friendName}`,
+      renotify: true
+    });
   }
+}
+
+/**
+ * Show a notification when a friend updates their status.
+ * Called from the realtime sync handler.
+ */
+function notifyFriendStatusUpdate(friendName, emoji, statusText) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  showPersistentStatusNotification(friendName, emoji, statusText);
 }
 
 /* ==========================================
@@ -791,6 +873,20 @@ function initEventListeners() {
   // Allow Enter key in friend ID input
   document.getElementById('friend-id-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('btn-send-invite')?.click();
+  });
+
+  // ── Refresh button ────────────────────────────────────────────────
+  document.getElementById('btn-refresh')?.addEventListener('click', async () => {
+    const icon = document.getElementById('refresh-icon');
+    if (icon) icon.style.animation = 'spin 0.6s linear infinite';
+    try {
+      await loadDashboardData();
+      showToast('Refreshed!');
+    } catch {
+      showToast('Could not refresh. Check your connection.', 'error');
+    } finally {
+      if (icon) icon.style.animation = '';
+    }
   });
 
   // ── Copy Pulse ID ──────────────────────────────────────────────────

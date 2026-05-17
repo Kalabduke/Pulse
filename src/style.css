@@ -60,7 +60,6 @@ body {
 #app-root {
   width: 100%;
   max-width: 480px;
-  min-height: 100vh;
   display: flex;
   flex-direction: column;
   background: rgba(9, 5, 20, 0.8);
@@ -106,7 +105,6 @@ p {
 .view-container {
   display: flex;
   flex-direction: column;
-  flex-grow: 1;
   padding: 24px;
   animation: fadeIn 0.4s ease-out forwards;
 }
@@ -299,7 +297,8 @@ p {
 .dashboard-grid {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+  padding-bottom: 24px;
 }
 
 .user-status-card {
@@ -1076,7 +1075,6 @@ p {
 
   #app-root {
     border-radius: 32px;
-    min-height: calc(100vh - 48px);
     border: 1px solid var(--border-glow);
   }
 }
@@ -1450,4 +1448,61 @@ p {
   border-color: hsl(var(--primary));
   box-shadow: 0 0 10px var(--primary-glow);
   transform: scale(1.15);
+}
+
+/* ==========================================
+   STATUS HISTORY
+   ========================================== */
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border-glow);
+  border-radius: 10px;
+  transition: var(--transition-smooth);
+}
+
+.history-item:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.history-emoji {
+  font-size: 22px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(99,102,241,0.08);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.history-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.history-text {
+  font-size: 13px;
+  color: hsl(var(--text-secondary));
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-time {
+  font-size: 10px;
+  color: hsl(var(--text-muted));
+}
+
+/* Spin animation for refresh icon */
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }

@@ -178,6 +178,7 @@ export async function getSessionAndProfile() {
 /**
  * Update the current user's display name, emoji, and status text.
  * Uses upsert so it works even if the profile row doesn't exist yet.
+ * Also logs to status_history.
  */
 export async function updateStatus(name, emoji, text) {
   const { data: { user } } = await client().auth.getUser();
@@ -196,7 +197,31 @@ export async function updateStatus(name, emoji, text) {
     .single();
 
   if (error) throw error;
+
+  // Log to history (fire and forget — don't block on failure)
+  client()
+    .from('status_history')
+    .insert({ user_id: user.id, status_emoji: emoji, status_text: text })
+    .then(({ error: histErr }) => {
+      if (histErr) console.warn('[Pulse] History log failed:', histErr.message);
+    });
+
   return data;
+}
+
+/**
+ * Fetch the last 15 status updates for a given user ID.
+ */
+export async function fetchStatusHistory(userId) {
+  const { data, error } = await client()
+    .from('status_history')
+    .select('id, status_emoji, status_text, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(15);
+
+  if (error) throw error;
+  return data || [];
 }
 
 /* ==========================================

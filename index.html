@@ -7,17 +7,19 @@
   
   <!-- SEO Meta Tags -->
   <meta name="description" content="Real-time emotional & health status updates on your lock screen & notifications with close friends.">
-  <link rel="icon" type="image/svg+xml" href="/logo.svg">
+  <link rel="icon" type="image/png" href="/icon-192.png">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#6366f1">
   
   <!-- Premium Style sheet -->
   <link rel="stylesheet" href="/src/style.css">
   
-  <!-- iOS support -->
-  <link rel="apple-touch-icon" href="/logo.svg">
+  <!-- iOS PWA support -->
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="/icon-512.png">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Pulse">
 </head>
 <body>
 
@@ -262,6 +264,20 @@
               <!-- Pending invites render here -->
               <div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No pending requests.</div>
             </div>
+          </div>
+        </div>
+
+        <!-- Status History Panel -->
+        <div class="glass-card" style="margin-top: 4px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h3 style="font-size: 16px; color: #a5b4fc;">My Status History</h3>
+            <button id="btn-refresh" class="btn btn-secondary btn-small" style="padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+              <span id="refresh-icon">↻</span>
+              <span>Refresh</span>
+            </button>
+          </div>
+          <div id="status-history-container" style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic;">Loading history...</div>
           </div>
         </div>
 

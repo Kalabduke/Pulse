@@ -139,3 +139,57 @@ $$;
 
 -- 6. ADD NICKNAME COLUMN (run this if you already have the connections table)
 alter table public.connections add column if not exists nickname text default null;
+
+-- 7. STATUS HISTORY TABLE
+-- Stores the last 15 status updates per user
+create table if not exists public.status_history (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  status_emoji text not null,
+  status_text text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Enable RLS
+alter table public.status_history enable row level security;
+
+-- Users can insert their own history
+create policy "Allow users to insert own history"
+on public.status_history for insert to authenticated
+with check (auth.uid() = user_id);
+
+-- Users can view history of their connected friends + their own
+create policy "Allow users to view connected friends history"
+on public.status_history for select to authenticated
+using (
+  auth.uid() = user_id
+  or exists (
+    select 1 from public.connections
+    where status = 'connected'
+    and (
+      (user_id = auth.uid() and friend_id = status_history.user_id)
+      or (friend_id = auth.uid() and user_id = status_history.user_id)
+    )
+  )
+);
+
+-- Auto-delete old history keeping only last 15 per user
+create or replace function public.trim_status_history()
+returns trigger as $$
+begin
+  delete from public.status_history
+  where user_id = new.user_id
+  and id not in (
+    select id from public.status_history
+    where user_id = new.user_id
+    order by created_at desc
+    limit 15
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
+
+drop trigger if exists on_status_history_insert on public.status_history;
+create trigger on_status_history_insert
+  after insert on public.status_history
+  for each row execute procedure public.trim_status_history();

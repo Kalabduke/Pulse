@@ -1,145 +1,182 @@
-const CACHE_NAME = 'pulse-v2';
+const CACHE_NAME = 'pulse-v4';
 
-// Core shell assets to pre-cache on install
 const SHELL_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/logo.svg',
+  '/icon-192.png',
+  '/icon-512.png',
   '/notification-icon.png'
 ];
 
 // ==========================================
-// INSTALL — Pre-cache the app shell
+// INSTALL
 // ==========================================
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('[SW] Pre-caching app shell');
-        // Use individual adds so one failure doesn't block the rest
-        return Promise.allSettled(
-          SHELL_ASSETS.map(url => cache.add(url).catch(err => {
-            console.warn('[SW] Failed to cache:', url, err);
-          }))
-        );
-      })
+      .then(cache => Promise.allSettled(
+        SHELL_ASSETS.map(url => cache.add(url).catch(() => {}))
+      ))
       .then(() => self.skipWaiting())
   );
 });
 
 // ==========================================
-// ACTIVATE — Clean up old caches
+// ACTIVATE
 // ==========================================
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((cacheNames) => Promise.all(
-        cacheNames
-          .filter(name => name !== CACHE_NAME)
-          .map(name => {
-            console.log('[SW] Deleting old cache:', name);
-            return caches.delete(name);
-          })
+      .then(names => Promise.all(
+        names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
       ))
       .then(() => self.clients.claim())
   );
 });
 
 // ==========================================
-// FETCH — Network-first with cache fallback
+// FETCH — Network first, cache fallback
 // ==========================================
 self.addEventListener('fetch', (event) => {
   const { request } = event;
-
-  // Only handle GET requests
   if (request.method !== 'GET') return;
-
-  // Skip Supabase API calls — always go to network
   if (request.url.includes('supabase.co')) return;
-
-  // Skip chrome-extension and non-http(s) requests
   if (!request.url.startsWith('http')) return;
 
   event.respondWith(
     fetch(request)
-      .then((networkResponse) => {
-        // Cache successful same-origin responses
-        if (
-          networkResponse.ok &&
-          networkResponse.type === 'basic' &&
-          !request.url.includes('hot-update')
-        ) {
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, responseClone));
+      .then(res => {
+        if (res.ok && res.type === 'basic' && !request.url.includes('hot-update')) {
+          caches.open(CACHE_NAME).then(c => c.put(request, res.clone()));
         }
-        return networkResponse;
+        return res;
       })
-      .catch(() => {
-        // Network failed — try cache
-        return caches.match(request).then((cachedResponse) => {
-          if (cachedResponse) return cachedResponse;
-
-          // For navigation requests, return the app shell
-          if (request.mode === 'navigate') {
-            return caches.match('/index.html');
-          }
-
-          // Nothing available
-          return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
-        });
-      })
+      .catch(() => caches.match(request).then(cached => {
+        if (cached) return cached;
+        if (request.mode === 'navigate') return caches.match('/index.html');
+        return new Response('Offline', { status: 503 });
+      }))
   );
 });
 
 // ==========================================
-// PUSH — Handle incoming push notifications
+// CORE NOTIFICATION HELPER
+// Shows TWO notifications:
+//   1. Pop-up alert (unique tag per friend) — appears as heads-up banner
+//   2. Persistent summary (fixed tag) — stays in tray like a live widget
+// ==========================================
+function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
+  const popupTitle = `${emoji} ${friendName}`;
+  const popupBody  = `"${statusText}"`;
+  const summaryBody = `${emoji} ${friendName}: "${statusText}"`;
+
+  // 1. Pop-up heads-up notification (unique tag so it doesn't replace others)
+  const popupPromise = self.registration.showNotification(popupTitle, {
+    body: popupBody,
+    icon: '/icon-192.png',
+    badge: '/notification-icon.png',
+    tag: `pulse-popup-${friendName}-${Date.now()}`,
+    renotify: true,
+    requireInteraction: false,
+    silent: false,
+    vibrate: [200, 100, 200],
+    data: { url },
+    actions: [
+      { action: 'open',    title: '👀 View' },
+      { action: 'dismiss', title: '✕' }
+    ]
+  });
+
+  // 2. Persistent summary notification (fixed tag — replaces itself, stays on lockscreen)
+  const persistentPromise = self.registration.showNotification('Pulse — Live Status', {
+    body: summaryBody,
+    icon: '/icon-192.png',
+    badge: '/notification-icon.png',
+    tag: 'pulse-live-widget',
+    renotify: false,       // silent update — no second buzz
+    requireInteraction: false,
+    silent: true,          // no sound for the persistent one
+    data: { url },
+    actions: [
+      { action: 'open', title: '👀 Open Pulse' }
+    ]
+  });
+
+  return Promise.all([popupPromise, persistentPromise]);
+}
+
+// ==========================================
+// PUSH — from server (future web push)
 // ==========================================
 self.addEventListener('push', (event) => {
-  let title = 'Pulse';
-  let body = 'Someone updated their status!';
-  let icon = '/logo.svg';
-  let badge = '/notification-icon.png';
+  let friendName = 'A friend';
+  let emoji = '💫';
+  let statusText = 'Updated their status';
+  let url = '/';
 
   if (event.data) {
     try {
-      const data = event.data.json();
-      title = data.title || title;
-      body = data.body || body;
-      icon = data.icon || icon;
+      const d = event.data.json();
+      friendName  = d.friendName  || friendName;
+      emoji       = d.emoji       || emoji;
+      statusText  = d.statusText  || statusText;
+      url         = d.url         || url;
     } catch {
-      body = event.data.text() || body;
+      statusText = event.data.text() || statusText;
     }
   }
 
+  event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+});
+
+// ==========================================
+// NOTIFICATION CLICK
+// ==========================================
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  if (event.action === 'dismiss') return;
+
+  const targetUrl = event.notification.data?.url || '/';
+
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon,
-      badge,
-      vibrate: [100, 50, 100],
-      tag: 'pulse-status',
-      renotify: true,
-      data: { url: '/' }
-    })
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then(clientList => {
+        for (const client of clientList) {
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            return client.focus();
+          }
+        }
+        return clients.openWindow(targetUrl);
+      })
   );
 });
 
 // ==========================================
-// NOTIFICATION CLICK — Focus or open app
+// BACKGROUND SYNC
 // ==========================================
-self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-status') {
+    event.waitUntil(
+      clients.matchAll().then(list =>
+        list.forEach(c => c.postMessage({ type: 'SYNC_REQUESTED' }))
+      )
+    );
+  }
+});
 
-  event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true })
-      .then((clientList) => {
-        // Focus existing window if open
-        for (const client of clientList) {
-          if ('focus' in client) return client.focus();
-        }
-        // Otherwise open a new window
-        return clients.openWindow('/');
-      })
-  );
+// ==========================================
+// MESSAGE — from app to SW
+// ==========================================
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+
+  // Triggered by realtime subscription when a friend updates
+  if (event.data?.type === 'FRIEND_STATUS_UPDATE') {
+    const { friendName, emoji, statusText, url } = event.data;
+    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+  }
 });
