@@ -18,6 +18,7 @@ import {
   removeConnection,
   subscribeToPulseSync,
   savePushSubscription,
+  saveFcmToken,
   notifyFriendsOfUpdate
 } from './supabase.js';
 
@@ -128,6 +129,8 @@ async function checkNavigationState() {
       startSimulatorClock();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
+      // Register FCM for native Android
+      registerFCMToken();
     } else {
       navigateTo('auth');
       setAuthMode('signin');
@@ -723,6 +726,47 @@ function registerServiceWorker() {
         .then(reg => console.log('[Pulse] SW registered:', reg.scope))
         .catch(err => console.warn('[Pulse] SW registration failed:', err));
     });
+  }
+}
+
+// Register FCM token for native Android push notifications
+async function registerFCMToken() {
+  // Only runs inside Capacitor native app
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  try {
+    const { PushNotifications } = await import('@capacitor/push-notifications');
+
+    await PushNotifications.requestPermissions();
+    await PushNotifications.register();
+
+    PushNotifications.addListener('registration', async (token) => {
+      console.log('[Pulse] FCM token:', token.value);
+      try {
+        const { saveFcmToken } = await import('./supabase.js');
+        await saveFcmToken(token.value);
+        console.log('[Pulse] FCM token saved');
+      } catch (e) {
+        console.warn('[Pulse] FCM token save failed:', e.message);
+      }
+    });
+
+    PushNotifications.addListener('pushNotificationReceived', (notification) => {
+      console.log('[Pulse] Push received:', notification);
+      // Reload dashboard when push arrives
+      if (state.userProfile) {
+        invalidateCache();
+        loadDashboardData();
+      }
+    });
+
+    PushNotifications.addListener('pushNotificationActionPerformed', () => {
+      // User tapped the notification — make sure app is visible
+      navigateTo('dashboard');
+    });
+
+  } catch (e) {
+    console.warn('[Pulse] FCM registration failed:', e.message);
   }
 }
 

@@ -252,7 +252,7 @@ export async function fetchFriendsStatusHistory(connectedFriendIds) {
     `)
     .in('user_id', connectedFriendIds)
     .order('created_at', { ascending: false })
-    .limit(15);
+    .limit(5);
 
   if (error) throw error;
   return data || [];
