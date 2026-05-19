@@ -29,6 +29,15 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
 
+      - name: Verify build has credentials
+        run: |
+          if grep -q "hrbophzmwuhmzylbjuge" dist/assets/main-*.js; then
+            echo "✅ Supabase URL baked in"
+          else
+            echo "❌ Supabase URL missing from build!"
+            exit 1
+          fi
+
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
