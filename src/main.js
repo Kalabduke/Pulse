@@ -46,8 +46,32 @@ const state = {
   realtimeChannel: null,
   authMode: 'signin',
   clockInterval: null,
-  pollInterval: null       // iOS fallback polling
+  pollInterval: null
 };
+
+// Simple in-memory cache to avoid redundant fetches
+const cache = {
+  connections: null,
+  connectionsAt: 0,
+  TTL: 30000 // 30 seconds
+};
+
+function getCachedConnections() {
+  if (cache.connections && Date.now() - cache.connectionsAt < cache.TTL) {
+    return cache.connections;
+  }
+  return null;
+}
+
+function setCachedConnections(data) {
+  cache.connections = data;
+  cache.connectionsAt = Date.now();
+}
+
+function invalidateCache() {
+  cache.connections = null;
+  cache.connectionsAt = 0;
+}
 
 /* ==========================================
    TOAST NOTIFICATIONS
@@ -200,6 +224,7 @@ function setupRealtimeSync() {
         }
       }
     } else if (change.type === 'connection_changed') {
+      invalidateCache();
       await loadDashboardData();
     }
   });
@@ -210,27 +235,37 @@ function setupRealtimeSync() {
    ========================================== */
 async function loadDashboardData() {
   try {
-    const profile = await getSessionAndProfile();
+    // Use cached connections if fresh, otherwise fetch in parallel
+    const cachedConns = getCachedConnections();
+
+    const [profile, connections] = await Promise.all([
+      getSessionAndProfile(_savedHash, _savedSearch),
+      cachedConns ? Promise.resolve(cachedConns) : fetchConnections()
+    ]);
+
     if (profile) {
       state.userProfile = profile;
       updateMyStatusUI();
       updateSimulatorUI();
     }
 
-    const connections = await fetchConnections();
+    if (!cachedConns) setCachedConnections(connections);
     state.connections = connections;
-
     renderFriendsFeed();
     renderPendingInvites();
 
-    // Load friends' status history (not own)
-    if (state.userProfile) {
-      const connectedFriendIds = state.connections
-        .filter(c => c.status === 'connected')
-        .map(c => c.friendId);
-      const history = await fetchFriendsStatusHistory(connectedFriendIds);
-      renderStatusHistory(history, state.connections);
+    const connectedFriendIds = connections
+      .filter(c => c.status === 'connected')
+      .map(c => c.friendId);
+
+    if (connectedFriendIds.length > 0) {
+      fetchFriendsStatusHistory(connectedFriendIds)
+        .then(history => renderStatusHistory(history, connections))
+        .catch(() => {});
+    } else {
+      renderStatusHistory([], connections);
     }
+
   } catch (err) {
     console.error('[Pulse] Dashboard load error:', err);
     showToast('Failed to sync. Check your connection.', 'error');
@@ -637,25 +672,30 @@ function showNicknameModal({ realName, currentNickname = '' }) {
 function startPollingFallback() {
   if (state.pollInterval) clearInterval(state.pollInterval);
 
-  // Only poll on iOS Safari / PWA
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  if (!isIOS) return;
-
+  // Poll on iOS AND as a general fallback for any device where realtime drops
   state.pollInterval = setInterval(async () => {
-    // Only poll if realtime channel is not SUBSCRIBED
     const channelStatus = state.realtimeChannel?.state;
     if (channelStatus !== 'joined') {
-      console.log('[Pulse] iOS polling fallback triggered');
+      // Only reload if realtime is actually disconnected
       await loadDashboardData();
     }
-  }, 30000); // every 30 seconds
+  }, isIOS ? 20000 : 45000); // 20s on iOS, 45s elsewhere
 
-  // Also reload when app comes back to foreground
+  // Reload on visibility change (app comes to foreground)
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && state.userProfile) {
-      await loadDashboardData();
+      // Only reload if been hidden for more than 30s
+      const now = Date.now();
+      if (!startPollingFallback._lastVisible || now - startPollingFallback._lastVisible > 30000) {
+        invalidateCache();
+        await loadDashboardData();
+      }
+      startPollingFallback._lastVisible = now;
+    } else {
+      startPollingFallback._lastVisible = Date.now();
     }
   });
 }
@@ -1141,6 +1181,7 @@ function initEventListeners() {
   document.getElementById('btn-refresh')?.addEventListener('click', async () => {
     const icon = document.getElementById('refresh-icon');
     if (icon) icon.style.animation = 'spin 0.6s linear infinite';
+    invalidateCache();
     try {
       await loadDashboardData();
       showToast('Refreshed!');

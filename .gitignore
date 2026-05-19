@@ -11,3 +11,5 @@ android/local.properties
 # Firebase service account — never commit this
 android/*.json
 !android/app/google-services.json
+# Keys reference file — never commit
+KEYS.md

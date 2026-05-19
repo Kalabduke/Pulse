@@ -14,7 +14,11 @@ export default defineConfig({
       }
     }
   },
-  // Copy sw.js to the root of the output so it can be served at /sw.js
-  // and have the correct service worker scope (entire origin)
+  define: {
+    // Provide empty string fallbacks so build doesn't fail without env vars
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL || ''),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY || ''),
+    'import.meta.env.VITE_VAPID_PUBLIC_KEY': JSON.stringify(process.env.VITE_VAPID_PUBLIC_KEY || ''),
+  },
   publicDir: 'public',
 });

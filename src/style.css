@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+/* Fonts loaded via HTML preconnect for performance */
 
 /* ==========================================
    DESIGN SYSTEM & VARIABLES
@@ -145,13 +145,16 @@ p {
    ========================================== */
 .glass-card {
   background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border-glow);
   border-radius: 20px;
   padding: 20px;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.15);
   transition: var(--transition-smooth);
+  /* backdrop-filter only on devices that can handle it */
+  @supports (backdrop-filter: blur(4px)) {
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+  }
 }
 
 .glass-card:hover {

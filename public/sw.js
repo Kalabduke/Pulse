@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulse-v4';
+const CACHE_NAME = 'pulse-v5';
 
 const SHELL_ASSETS = [
   '/',
@@ -36,7 +36,7 @@ self.addEventListener('activate', (event) => {
 });
 
 // ==========================================
-// FETCH — Network first, cache fallback
+// FETCH — Stale-while-revalidate for static, network-first for dynamic
 // ==========================================
 self.addEventListener('fetch', (event) => {
   const { request } = event;
@@ -44,6 +44,30 @@ self.addEventListener('fetch', (event) => {
   if (request.url.includes('supabase.co')) return;
   if (!request.url.startsWith('http')) return;
 
+  // Static assets (JS, CSS, fonts, images) — serve from cache instantly, update in background
+  const isStatic = request.destination === 'script' ||
+    request.destination === 'style' ||
+    request.destination === 'font' ||
+    request.destination === 'image' ||
+    request.url.includes('/assets/');
+
+  if (isStatic) {
+    event.respondWith(
+      caches.open(CACHE_NAME).then(async cache => {
+        const cached = await cache.match(request);
+        const fetchPromise = fetch(request).then(res => {
+          if (res.ok) cache.put(request, res.clone());
+          return res;
+        }).catch(() => cached);
+
+        // Return cached immediately, update in background
+        return cached || fetchPromise;
+      })
+    );
+    return;
+  }
+
+  // Navigation and other requests — network first, cache fallback
   event.respondWith(
     fetch(request)
       .then(res => {
