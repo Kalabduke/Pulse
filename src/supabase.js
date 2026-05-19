@@ -432,6 +432,20 @@ export async function removeConnection(connectionId) {
   if (error) throw error;
 }
 
+/**
+ * Save an FCM token for native Android push notifications.
+ */
+export async function saveFcmToken(token: string) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { error } = await client()
+    .from('fcm_tokens')
+    .upsert({ user_id: user.id, token }, { onConflict: 'token' });
+
+  if (error) throw error;
+}
+
 /* ==========================================
    PUSH SUBSCRIPTIONS
    ========================================== */

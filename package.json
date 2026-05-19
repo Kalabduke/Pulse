@@ -9,9 +9,15 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor-firebase/messaging": "^8.2.0",
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/push-notifications": "^8.1.1",
     "@supabase/supabase-js": "^2.43.4"
   },
   "devDependencies": {
+    "typescript": "^6.0.3",
     "vite": "^5.2.11"
   }
 }

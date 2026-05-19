@@ -1,0 +1,9 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pulse</string>
+    <string name="title_activity_main">Pulse</string>
+    <string name="package_name">com.pulse.statusapp</string>
+    <string name="custom_url_scheme">com.pulse.statusapp</string>
+    <string name="widget_description">Shows your friends\' latest Pulse status</string>
+    <string name="default_notification_channel_id">pulse_status</string>
+</resources>

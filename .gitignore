@@ -4,3 +4,10 @@ dist/
 .env.local
 .DS_Store
 *.log
+# Keep android folder but ignore build outputs
+android/app/build/
+android/.gradle/
+android/local.properties
+# Firebase service account — never commit this
+android/*.json
+!android/app/google-services.json

@@ -210,3 +210,18 @@ create policy "Users manage own push subscriptions"
 on public.push_subscriptions for all to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+-- 9. FCM TOKENS TABLE (for native Android push notifications)
+create table if not exists public.fcm_tokens (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  token text not null unique,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.fcm_tokens enable row level security;
+
+create policy "Users manage own FCM tokens"
+on public.fcm_tokens for all to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
