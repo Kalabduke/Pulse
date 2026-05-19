@@ -92,18 +92,41 @@ export async function signUpWithPassword(email, password, name) {
   return data;
 }
 /**
- * Sign in with Google OAuth (redirects to Google then back).
+ * Sign in with Google OAuth.
+ * On native Android, uses Capacitor Browser for proper deep link handling.
+ * On web, uses standard Supabase OAuth redirect.
  */
 export async function signInWithGoogle() {
-  const { data, error } = await client().auth.signInWithOAuth({
-    provider: 'google',
-    options: {
-      redirectTo: window.location.origin,
-      queryParams: { prompt: 'select_account' }
-    }
-  });
-  if (error) throw error;
-  return data;
+  const isNative = window.Capacitor?.isNativePlatform();
+
+  if (isNative) {
+    // On native, open OAuth in Capacitor Browser which can redirect back to app
+    const { data, error } = await client().auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: 'com.pulse.statusapp://login-callback',
+        skipBrowserRedirect: true,
+        queryParams: { prompt: 'select_account' }
+      }
+    });
+    if (error) throw error;
+
+    // Open in Capacitor Browser
+    const { Browser } = await import('@capacitor/browser');
+    await Browser.open({ url: data.url });
+    return data;
+  } else {
+    // Web — standard redirect
+    const { data, error } = await client().auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'select_account' }
+      }
+    });
+    if (error) throw error;
+    return data;
+  }
 }
 
 /**
@@ -119,6 +142,15 @@ export async function sendPasswordReset(email) {
 /** Sign the current user out. */
 export async function signOutUser() {
   const { error } = await client().auth.signOut();
+  if (error) throw error;
+}
+
+/** Set session from tokens (used for native OAuth deep link callback) */
+export async function setSessionFromTokens(accessToken, refreshToken) {
+  const { error } = await client().auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken
+  });
   if (error) throw error;
 }
 

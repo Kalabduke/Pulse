@@ -1270,6 +1270,37 @@ document.addEventListener('DOMContentLoaded', () => {
   registerServiceWorker();
   initEventListeners();
   checkNavigationState();
+
+  // Handle deep link OAuth callback on native Android
+  if (window.Capacitor?.isNativePlatform()) {
+    import('@capacitor/browser').then(({ Browser }) => {
+      Browser.addListener('browserFinished', () => {
+        // Browser closed — check if we got a session
+        setTimeout(() => checkNavigationState(), 500);
+      });
+    });
+
+    // Listen for app URL open (deep link)
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appUrlOpen', async (event) => {
+        const url = event.url;
+        if (url.includes('login-callback')) {
+          // Extract tokens from URL and establish session
+          const urlObj = new URL(url.replace('com.pulse.statusapp://', 'https://pulse.app/'));
+          const accessToken = urlObj.searchParams.get('access_token') ||
+            new URLSearchParams(urlObj.hash.substring(1)).get('access_token');
+          const refreshToken = urlObj.searchParams.get('refresh_token') ||
+            new URLSearchParams(urlObj.hash.substring(1)).get('refresh_token');
+
+          if (accessToken) {
+            const { setSessionFromTokens } = await import('./supabase.js');
+            await setSessionFromTokens(accessToken, refreshToken || '');
+          }
+          await checkNavigationState();
+        }
+      });
+    }).catch(() => {});
+  }
 });
 
 /* ==========================================
