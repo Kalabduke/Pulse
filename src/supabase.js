@@ -435,7 +435,7 @@ export async function removeConnection(connectionId) {
 /**
  * Save an FCM token for native Android push notifications.
  */
-export async function saveFcmToken(token: string) {
+export async function saveFcmToken(token) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
