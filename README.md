@@ -2,18 +2,13 @@
 <h1>⚡ Pulse</h1>
 <p><strong>A real-time emotional and health status sharing app for close friends.</strong></p>
 <p>
-  <a href="https://pulse-gray-eight.vercel.app" target="_blank"> </a>
+  <a href="https://pulse-gray-eight.vercel.app" target="_blank"><img src="https://img.shields.io/badge/Live%20Demo-3B82F6?style=for-the-badge&logo=vercel&logoColor=white" alt="Live Demo" /></a>
   <a href="https://github.com/Kalabduke/Pulse"><img src="https://img.shields.io/badge/GitHub-EF4444?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" /></a>
   <img src="https://img.shields.io/badge/Vite-3B82F6?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/Supabase-EF4444?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
   <img src="https://img.shields.io/badge/PWA-3B82F6?style=for-the-badge&logo=pwa&logoColor=white" alt="PWA" />
 </p>
 <p><em>Private, intimate "what are you up to right now" — not a social feed, but a live presence indicator for your closest people.</em></p>
-</div>
-📸 Preview
-<div align="center">
-  <img src="https://via.placeholder.com/800x400/0f172a/3b82f6?text=Pulse+App+Screenshot+-+Add+Your+Own" alt="Pulse Preview" width="80%" />
-  <p><em>Replace with screenshots of your app</em></p>
 </div>
 ✨ Features
 🔐 Authentication
