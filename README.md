@@ -2,7 +2,7 @@
 <h1>⚡ Pulse</h1>
 <p><strong>A real-time emotional and health status sharing app for close friends.</strong></p>
 <p>
-  <a href="https://pulse-gray-eight.vercel.app" target="_blank"><img src="https://img.shields.io/badge/Live%20Demo-3B82F6?style=for-the-badge&logo=vercel&logoColor=white" alt="Live Demo" /></a>
+  <a href="https://pulse-gray-eight.vercel.app" target="_blank"> </a>
   <a href="https://github.com/Kalabduke/Pulse"><img src="https://img.shields.io/badge/GitHub-EF4444?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" /></a>
   <img src="https://img.shields.io/badge/Vite-3B82F6?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/Supabase-EF4444?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
