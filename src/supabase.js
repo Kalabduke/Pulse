@@ -1,16 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Global Supabase client reference
 let supabase = null;
 
-/* ==========================================
-   CLIENT INITIALIZATION
-   ========================================== */
-
-/**
- * Initialize Supabase client.
- * Priority: 1. Passed arguments, 2. localStorage, 3. Vite env variables.
- */
 export function initSupabase(url = null, anonKey = null) {
   const configUrl = url
     || localStorage.getItem('pulse_supabase_url')
@@ -21,7 +12,6 @@ export function initSupabase(url = null, anonKey = null) {
 
   if (!configUrl || !configKey) return false;
 
-  // Persist custom credentials
   if (url && anonKey) {
     localStorage.setItem('pulse_supabase_url', url);
     localStorage.setItem('pulse_supabase_anon_key', anonKey);
@@ -42,23 +32,20 @@ export function initSupabase(url = null, anonKey = null) {
   }
 }
 
-/** Returns true if the client is ready (or can be auto-initialized). */
 export function isSupabaseConfigured() {
   if (supabase) return true;
   return initSupabase();
 }
 
-/** Clear saved credentials and destroy the client. */
 export function resetSupabaseConfig() {
   localStorage.removeItem('pulse_supabase_url');
   localStorage.removeItem('pulse_supabase_anon_key');
   supabase = null;
 }
 
-/** Internal helper — throws if client is not ready. */
 function client() {
   if (!supabase && !initSupabase()) {
-    throw new Error('Supabase is not configured. Please add your project URL and anon key.');
+    throw new Error('Supabase is not configured.');
   }
   return supabase;
 }
@@ -67,18 +54,12 @@ function client() {
    AUTHENTICATION
    ========================================== */
 
-/**
- * Sign in with email and password.
- */
 export async function signInWithPassword(email, password) {
   const { data, error } = await client().auth.signInWithPassword({ email, password });
   if (error) throw error;
   return data;
 }
 
-/**
- * Create a new account with email, password, and display name.
- */
 export async function signUpWithPassword(email, password, name) {
   const { data, error } = await client().auth.signUp({
     email,
@@ -91,16 +72,10 @@ export async function signUpWithPassword(email, password, name) {
   if (error) throw error;
   return data;
 }
-/**
- * Sign in with Google OAuth.
- * On native Android, uses Capacitor Browser for proper deep link handling.
- * On web, uses standard Supabase OAuth redirect.
- */
+
 export async function signInWithGoogle() {
   const isNative = window.Capacitor?.isNativePlatform();
-
   if (isNative) {
-    // On native, open OAuth in Capacitor Browser which can redirect back to app
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -110,13 +85,10 @@ export async function signInWithGoogle() {
       }
     });
     if (error) throw error;
-
-    // Open in Capacitor Browser
     const { Browser } = await import('@capacitor/browser');
     await Browser.open({ url: data.url });
     return data;
   } else {
-    // Web — standard redirect
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -129,9 +101,6 @@ export async function signInWithGoogle() {
   }
 }
 
-/**
- * Send a password reset email.
- */
 export async function sendPasswordReset(email) {
   const { error } = await client().auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}?reset=true`
@@ -139,13 +108,11 @@ export async function sendPasswordReset(email) {
   if (error) throw error;
 }
 
-/** Sign the current user out. */
 export async function signOutUser() {
   const { error } = await client().auth.signOut();
   if (error) throw error;
 }
 
-/** Set session from tokens (used for native OAuth deep link callback) */
 export async function setSessionFromTokens(accessToken, refreshToken) {
   const { error } = await client().auth.setSession({
     access_token: accessToken,
@@ -154,51 +121,39 @@ export async function setSessionFromTokens(accessToken, refreshToken) {
   if (error) throw error;
 }
 
-/**
- * Returns the current user's profile, or null if not logged in.
- * Falls back to partial auth metadata if the DB trigger hasn't fired yet.
- */
 export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
-  // First try to get session normally
   let { data: { session }, error: sessionError } = await client().auth.getSession();
   if (sessionError) throw sessionError;
 
-  // If no session, try extracting from saved URL params (cleaned before render)
-  if (!session) {
-    // Handle token hash from email confirmation / OAuth
-    if (savedHash && savedHash.includes('access_token')) {
-      const hashParams = new URLSearchParams(savedHash.substring(1));
-      const accessToken = hashParams.get('access_token');
-      const refreshToken = hashParams.get('refresh_token');
-      if (accessToken) {
-        const { data, error } = await client().auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken || ''
-        });
-        if (!error && data.session) session = data.session;
-      }
-    }
-
-    // Handle PKCE code exchange
-    const code = new URLSearchParams(savedSearch).get('code');
-    if (code) {
-      const { data, error } = await client().auth.exchangeCodeForSession(code);
+  if (!session && savedHash && savedHash.includes('access_token')) {
+    const hashParams = new URLSearchParams(savedHash.substring(1));
+    const accessToken = hashParams.get('access_token');
+    const refreshToken = hashParams.get('refresh_token');
+    if (accessToken) {
+      const { data, error } = await client().auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken || ''
+      });
       if (!error && data.session) session = data.session;
     }
   }
 
-  if (!session) return null;
+  const code = new URLSearchParams(savedSearch).get('code');
+  if (code) {
+    const { data, error } = await client().auth.exchangeCodeForSession(code);
+    if (!error && data.session) session = data.session;
+  }
 
+  if (!session) return null;
   const user = session.user;
 
   const { data: profile, error: profileError } = await client()
     .from('profiles')
-    .select('*')
+    .select('*, last_seen')
     .eq('id', user.id)
     .single();
 
   if (profileError) {
-    // Profile doesn't exist yet — create it now (trigger may have missed OAuth signups)
     const { data: newProfile, error: insertError } = await client()
       .from('profiles')
       .upsert({
@@ -212,7 +167,6 @@ export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
       .single();
 
     if (insertError) {
-      console.warn('[Pulse] Could not create profile:', insertError.message);
       return {
         id: user.id,
         email: user.email,
@@ -229,15 +183,40 @@ export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
 }
 
 /* ==========================================
+   IMAGE UPLOAD
+   ========================================== */
+
+export async function uploadStatusImage(file) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+  const filePath = `statuses/${fileName}`;
+
+  const { error: uploadError } = await client()
+    .storage
+    .from('pulse-images')
+    .upload(filePath, file, {
+      cacheControl: '3600',
+      upsert: false
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data: { publicUrl } } = client()
+    .storage
+    .from('pulse-images')
+    .getPublicUrl(filePath);
+
+  return publicUrl;
+}
+
+/* ==========================================
    STATUS & PROFILES
    ========================================== */
 
-/**
- * Update the current user's display name, emoji, and status text.
- * Uses upsert so it works even if the profile row doesn't exist yet.
- * Also logs to status_history.
- */
-export async function updateStatus(name, emoji, text) {
+export async function updateStatus(name, emoji, text, imageUrl = null) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
@@ -248,6 +227,7 @@ export async function updateStatus(name, emoji, text) {
       name,
       status_emoji: emoji,
       status_text: text,
+      status_image_url: imageUrl,
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' })
     .select()
@@ -255,10 +235,14 @@ export async function updateStatus(name, emoji, text) {
 
   if (error) throw error;
 
-  // Log to history (fire and forget — don't block on failure)
   client()
     .from('status_history')
-    .insert({ user_id: user.id, status_emoji: emoji, status_text: text })
+    .insert({
+      user_id: user.id,
+      status_emoji: emoji,
+      status_text: text,
+      status_image_url: imageUrl
+    })
     .then(({ error: histErr }) => {
       if (histErr) console.warn('[Pulse] History log failed:', histErr.message);
     });
@@ -266,10 +250,6 @@ export async function updateStatus(name, emoji, text) {
   return data;
 }
 
-/**
- * Fetch the last 15 status updates across all connected friends (not self).
- * Returns entries sorted newest first, with the friend's name included.
- */
 export async function fetchFriendsStatusHistory(connectedFriendIds) {
   if (!connectedFriendIds || connectedFriendIds.length === 0) return [];
 
@@ -279,24 +259,22 @@ export async function fetchFriendsStatusHistory(connectedFriendIds) {
       id,
       status_emoji,
       status_text,
+      status_image_url,
       created_at,
       profile:profiles!status_history_user_id_fkey(id, name)
     `)
     .in('user_id', connectedFriendIds)
     .order('created_at', { ascending: false })
-    .limit(5);
+    .limit(15);
 
   if (error) throw error;
   return data || [];
 }
 
-/**
- * Fetch the last 15 status updates for a given user ID.
- */
 export async function fetchStatusHistory(userId) {
   const { data, error } = await client()
     .from('status_history')
-    .select('id, status_emoji, status_text, created_at')
+    .select('id, status_emoji, status_text, status_image_url, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(15);
@@ -306,13 +284,9 @@ export async function fetchStatusHistory(userId) {
 }
 
 /* ==========================================
-   CONNECTIONS
+   CONNECTIONS (with unread counts + last_seen)
    ========================================== */
 
-/**
- * Fetch all connections (pending + connected) for the current user.
- * Returns a normalized array of connection objects.
- */
 export async function fetchConnections() {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
@@ -324,12 +298,34 @@ export async function fetchConnections() {
       status,
       nickname,
       created_at,
-      sender:profiles!connections_user_id_fkey(id, name, status_emoji, status_text, updated_at),
-      receiver:profiles!connections_friend_id_fkey(id, name, status_emoji, status_text, updated_at)
+      sender:profiles!connections_user_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen),
+      receiver:profiles!connections_friend_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen)
     `)
     .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
   if (error) throw error;
+
+  const friendIds = data.map(conn => {
+    const isSender = conn.sender?.id === user.id;
+    return isSender ? conn.receiver?.id : conn.sender?.id;
+  }).filter(Boolean);
+
+  const unreadCounts = {};
+  if (friendIds.length > 0) {
+    const { data: unreadData, error: unreadErr } = await client()
+      .from('messages')
+      .select('sender_id, count')
+      .eq('recipient_id', user.id)
+      .is('read_at', null)
+      .in('sender_id', friendIds)
+      .group('sender_id');
+
+    if (!unreadErr && unreadData) {
+      unreadData.forEach(row => {
+        unreadCounts[row.sender_id] = parseInt(row.count);
+      });
+    }
+  }
 
   return data.map(conn => {
     const isSender = conn.sender?.id === user.id;
@@ -345,37 +341,30 @@ export async function fetchConnections() {
       displayName: conn.nickname?.trim() || friend?.name || 'Unknown',
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
-      updatedAt: friend?.updated_at
+      statusImageUrl: friend?.status_image_url || null,
+      updatedAt: friend?.updated_at,
+      lastSeen: friend?.last_seen,
+      unreadCount: unreadCounts[friend?.id] || 0
     };
   });
 }
 
-/**
- * Send a connection request to a friend.
- * Accepts a Pulse User ID (UUID) or an exact display name.
- * Enforces the 5-connection MVP limit.
- */
 export async function sendConnectionRequest(friendIdOrName) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
   const query = friendIdOrName.trim();
-
   if (!query) throw new Error('Please enter a Pulse ID or display name.');
-
-  // Prevent self-connection
   if (query.toLowerCase() === user.id.toLowerCase()) {
     throw new Error("You can't connect with yourself!");
   }
 
-  // Enforce 5-connection limit
   const existing = await fetchConnections();
   const activeCount = existing.filter(c => c.status === 'connected').length;
   if (activeCount >= 5) {
     throw new Error('MVP limit: You can only have up to 5 connections.');
   }
 
-  // Look up friend by UUID or exact display name
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let friendProfile = null;
 
@@ -400,12 +389,10 @@ export async function sendConnectionRequest(friendIdOrName) {
   if (!friendProfile) {
     throw new Error("Friend not found. Check their Pulse ID or display name.");
   }
-
   if (friendProfile.id === user.id) {
     throw new Error("You can't connect with yourself!");
   }
 
-  // Check for duplicate connection
   const duplicate = existing.find(c => c.friendId === friendProfile.id);
   if (duplicate) {
     throw new Error(`You already have a ${duplicate.status} connection with this person.`);
@@ -421,13 +408,8 @@ export async function sendConnectionRequest(friendIdOrName) {
   return data;
 }
 
-// Keep the old export name as an alias for backward compatibility
 export const inviteFriendByEmail = sendConnectionRequest;
 
-/**
- * Set or clear a nickname for a connection.
- * Only the user who owns the connection (user_id) can set their own nickname for a friend.
- */
 export async function setConnectionNickname(connectionId, nickname) {
   const { data, error } = await client()
     .from('connections')
@@ -439,9 +421,6 @@ export async function setConnectionNickname(connectionId, nickname) {
   return data;
 }
 
-/**
- * Accept a pending incoming connection request.
- */
 export async function acceptInvitation(connectionId) {
   const { data, error } = await client()
     .from('connections')
@@ -453,9 +432,6 @@ export async function acceptInvitation(connectionId) {
   return data;
 }
 
-/**
- * Delete a connection (reject, cancel, or disconnect).
- */
 export async function removeConnection(connectionId) {
   const { error } = await client()
     .from('connections')
@@ -464,9 +440,75 @@ export async function removeConnection(connectionId) {
   if (error) throw error;
 }
 
-/**
- * Save an FCM token for native Android push notifications.
- */
+/* ==========================================
+   DIRECT MESSAGES
+   ========================================== */
+
+export async function sendDirectMessage(recipientId, text, imageUrl = null) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { data, error } = await client()
+    .from('messages')
+    .insert({
+      sender_id: user.id,
+      recipient_id: recipientId,
+      content_text: text,
+      image_url: imageUrl
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function fetchDirectMessages(friendId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { data, error } = await client()
+    .from('messages')
+    .select('*')
+    .or(`and(sender_id.eq.${user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${user.id})`)
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+export async function markMessagesAsRead(friendId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { error } = await client()
+    .from('messages')
+    .update({ read_at: new Date().toISOString() })
+    .eq('recipient_id', user.id)
+    .eq('sender_id', friendId)
+    .is('read_at', null);
+
+  if (error) throw error;
+}
+
+/* ==========================================
+   ONLINE PRESENCE HEARTBEAT
+   ========================================== */
+
+export async function updateLastSeen() {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return;
+
+  await client()
+    .from('profiles')
+    .update({ last_seen: new Date().toISOString() })
+    .eq('id', user.id);
+}
+
+/* ==========================================
+   PUSH & REALTIME
+   ========================================== */
+
 export async function saveFcmToken(token) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
@@ -478,20 +520,11 @@ export async function saveFcmToken(token) {
   if (error) throw error;
 }
 
-/* ==========================================
-   PUSH SUBSCRIPTIONS
-   ========================================== */
-
-/**
- * Save a Web Push subscription to the database.
- */
 export async function savePushSubscription(subscription) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
   const subJson = subscription.toJSON();
-
-  // Don't insert endpoint — it's a generated column derived from subscription jsonb
   const { error } = await client()
     .from('push_subscriptions')
     .upsert({
@@ -502,9 +535,6 @@ export async function savePushSubscription(subscription) {
   if (error) throw error;
 }
 
-/**
- * Notify friends via Edge Function after a status update.
- */
 export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
   try {
     const supabaseUrl = localStorage.getItem('pulse_supabase_url')
@@ -525,18 +555,6 @@ export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
   }
 }
 
-/* ==========================================
-   REAL-TIME SUBSCRIPTIONS
-   ========================================== */
-
-/**
- * Subscribe to live profile updates and connection changes.
- * Fires `callback` with a typed event object whenever something changes.
- *
- * @param {string} userId - The current user's ID (used for logging/filtering)
- * @param {Function} callback - ({ type, record, event? }) => void
- * @returns The Supabase RealtimeChannel (call .unsubscribe() to clean up)
- */
 export function subscribeToPulseSync(userId, callback) {
   if (!isSupabaseConfigured()) return null;
 
@@ -558,6 +576,13 @@ export function subscribeToPulseSync(userId, callback) {
           event: payload.eventType,
           record: payload.new || payload.old
         });
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` },
+      (payload) => {
+        callback({ type: 'new_message', record: payload.new });
       }
     )
     .subscribe((status) => {

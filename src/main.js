@@ -19,11 +19,14 @@ import {
   subscribeToPulseSync,
   savePushSubscription,
   saveFcmToken,
-  notifyFriendsOfUpdate
+  notifyFriendsOfUpdate,
+  uploadStatusImage,
+  sendDirectMessage,
+  fetchDirectMessages,
+  markMessagesAsRead,
+  updateLastSeen
 } from './supabase.js';
 
-// ── Clean URL immediately — remove tokens/codes before anything renders ──
-// Save them first so getSessionAndProfile can still use them
 const _savedHash = window.location.hash;
 const _savedSearch = window.location.search;
 (function cleanUrl() {
@@ -50,11 +53,15 @@ const state = {
   pollInterval: null
 };
 
-// Simple in-memory cache to avoid redundant fetches
+let currentStatusImage = null;
+let currentStatusImageUrl = null;
+let currentChatImage = null;
+let currentChatFriend = null;
+
 const cache = {
   connections: null,
   connectionsAt: 0,
-  TTL: 30000 // 30 seconds
+  TTL: 30000
 };
 
 function getCachedConnections() {
@@ -72,6 +79,52 @@ function setCachedConnections(data) {
 function invalidateCache() {
   cache.connections = null;
   cache.connectionsAt = 0;
+}
+
+/* ==========================================
+   ONLINE PRESENCE — 60 SECOND THRESHOLD
+   ========================================== */
+const ONLINE_THRESHOLD_MS = 60 * 1000;
+
+function isOnline(lastSeenTimestamp) {
+  if (!lastSeenTimestamp) return false;
+  const diff = Date.now() - new Date(lastSeenTimestamp).getTime();
+  return diff < ONLINE_THRESHOLD_MS;
+}
+
+function startHeartbeat() {
+  updateLastSeen().catch(() => {});
+  setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      updateLastSeen().catch(() => {});
+    }
+  }, 20000);
+}
+
+/* ==========================================
+   IMAGE COMPRESSION
+   ========================================== */
+function compressImage(file, maxWidth = 1200, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        canvas.toBlob((blob) => {
+          resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+        }, 'image/jpeg', quality);
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 /* ==========================================
@@ -103,11 +156,13 @@ function navigateTo(viewName) {
   const views = {
     config: document.getElementById('config-view'),
     auth: document.getElementById('auth-view'),
-    dashboard: document.getElementById('dashboard-view')
+    dashboard: document.getElementById('dashboard-view'),
+    chat: document.getElementById('chat-view')
   };
 
   Object.entries(views).forEach(([key, el]) => {
-    if (el) el.style.display = key === viewName ? 'flex' : 'none';
+    if (!el) return;
+    el.style.display = key === viewName ? 'flex' : 'none';
   });
 }
 
@@ -129,8 +184,8 @@ async function checkNavigationState() {
       startSimulatorClock();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
-      // Register FCM for native Android
       registerFCMToken();
+      startHeartbeat();
     } else {
       navigateTo('auth');
       setAuthMode('signin');
@@ -213,15 +268,12 @@ function setupRealtimeSync() {
           c => c.friendId === updatedId && c.status === 'connected'
         );
         if (isFriend) {
-          // Find the friend's display name (nickname or real name)
           const friend = state.connections.find(c => c.friendId === updatedId);
           const displayName = friend?.nickname?.trim() || change.record.name || 'A friend';
           const emoji = change.record.status_emoji || '💫';
           const text = change.record.status_text || 'Updated their status';
 
-          // Show lockscreen notification
           notifyFriendStatusUpdate(displayName, emoji, text);
-
           showToast(`${emoji} ${displayName} updated their status!`);
           await loadDashboardData();
         }
@@ -229,6 +281,16 @@ function setupRealtimeSync() {
     } else if (change.type === 'connection_changed') {
       invalidateCache();
       await loadDashboardData();
+    } else if (change.type === 'new_message') {
+      const msg = change.record;
+      if (currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
+        await loadChatMessages(currentChatFriend.friendId);
+        await markMessagesAsRead(currentChatFriend.friendId);
+      } else {
+        showToast('New message! 💬');
+        invalidateCache();
+        await loadDashboardData();
+      }
     }
   });
 }
@@ -238,7 +300,6 @@ function setupRealtimeSync() {
    ========================================== */
 async function loadDashboardData() {
   try {
-    // Use cached connections if fresh, otherwise fetch in parallel
     const cachedConns = getCachedConnections();
 
     const [profile, connections] = await Promise.all([
@@ -256,6 +317,19 @@ async function loadDashboardData() {
     state.connections = connections;
     renderFriendsFeed();
     renderPendingInvites();
+
+    const directSelect = document.getElementById('direct-friend-select');
+    if (directSelect) {
+      directSelect.innerHTML = '<option value="">Select a friend...</option>';
+      connections
+        .filter(c => c.status === 'connected')
+        .forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.friendId;
+          opt.textContent = c.displayName;
+          directSelect.appendChild(opt);
+        });
+    }
 
     const connectedFriendIds = connections
       .filter(c => c.status === 'connected')
@@ -281,21 +355,34 @@ function updateMyStatusUI() {
   const myName = document.getElementById('my-name');
   const myAvatar = document.getElementById('my-avatar');
   const myStatusBubble = document.getElementById('my-status-bubble');
+  const myStatusImage = document.getElementById('my-status-image');
   const idDisplay = document.getElementById('my-id-display');
+  const myDot = document.getElementById('my-pulse-dot');
 
   if (myName) myName.textContent = state.userProfile.name || 'My Status';
   if (myAvatar) myAvatar.textContent = state.userProfile.status_emoji || '👋';
   if (myStatusBubble) {
     myStatusBubble.textContent = `"${state.userProfile.status_text || 'Available'}"`;
   }
+  if (myStatusImage) {
+    if (state.userProfile.status_image_url) {
+      myStatusImage.src = state.userProfile.status_image_url;
+      myStatusImage.style.display = 'block';
+    } else {
+      myStatusImage.style.display = 'none';
+    }
+  }
   if (idDisplay) {
     idDisplay.textContent = state.userProfile.id;
     idDisplay.title = 'Click to copy your Pulse ID';
   }
+  if (myDot) {
+    myDot.className = 'online-pulse-dot';
+  }
 }
 
 /* ==========================================
-   EMOJI PICKER — CATEGORIES & CUSTOM INPUT
+   EMOJI PICKER
    ========================================== */
 const EMOJI_CATEGORIES = {
   mood: ['😊','😄','😁','🥰','😍','🤩','😎','🥳','😂','🤣','😅','😌','😏','🤔','😐','😑','😶','🙄','😒','😔','😞','😟','😕','🙁','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','😈','👿','😱','😨','😰','😥','😓','🤗','🤭','🤫','🤥','😬','🤐','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🥶','🥵','😴','💤','🤤','😪'],
@@ -326,23 +413,16 @@ function renderEmojiGrid(category, selectedEmoji) {
 
 function selectEmoji(emoji) {
   state.selectedEmoji = emoji;
-
-  // Update preview
   const preview = document.getElementById('emoji-preview');
   if (preview) preview.textContent = emoji;
-
-  // Update custom input
   const customInput = document.getElementById('emoji-custom-input');
   if (customInput) customInput.value = emoji;
-
-  // Update active state in grid
   document.querySelectorAll('#emoji-grid .emoji-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.emoji === emoji);
   });
 }
 
 function initEmojiPicker() {
-  // Category tabs
   document.getElementById('emoji-category-tabs')?.querySelectorAll('.emoji-cat-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('.emoji-cat-tab').forEach(t => t.classList.remove('active'));
@@ -352,18 +432,15 @@ function initEmojiPicker() {
     });
   });
 
-  // Custom emoji input
   const customInput = document.getElementById('emoji-custom-input');
   customInput?.addEventListener('input', (e) => {
     const val = e.target.value.trim();
     if (!val) return;
-    // Extract first emoji/character
     const chars = [...val];
     const emoji = chars[0];
     if (emoji) selectEmoji(emoji);
   });
 
-  // Initial render
   renderEmojiGrid(currentEmojiCategory, state.selectedEmoji);
 }
 
@@ -409,48 +486,57 @@ function renderFriendsFeed() {
   container.innerHTML = '';
 
   connected.forEach(friend => {
+    const hasImage = friend.statusImageUrl;
+    const hasUnread = friend.unreadCount > 0;
+    const online = isOnline(friend.lastSeen);
+    
     const card = document.createElement('div');
     card.className = 'glass-card user-status-card';
+    card.dataset.friendId = friend.friendId;
+    card.style.cursor = 'pointer';
+    card.style.position = 'relative';
+    
     card.innerHTML = `
-      <div class="avatar-container">
+      <div class="avatar-container" style="position:relative;">
         <span>${friend.statusEmoji || '😊'}</span>
-        <span class="online-pulse-dot"></span>
+        ${online ? '<span class="online-pulse-dot"></span>' : '<span class="offline-dot"></span>'}
+        ${hasUnread ? `<span class="unread-badge">${friend.unreadCount}</span>` : ''}
       </div>
-      <div class="status-details">
+      <div class="status-details" style="flex:1; min-width:0;">
         <div class="status-user-name">
           <span class="friend-display-name">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
           ${friend.nickname ? `<span class="real-name-tag" title="Real name">${escapeHtml(friend.name)}</span>` : ''}
         </div>
         <div class="status-bubble">"${escapeHtml(friend.statusText || 'Available')}"</div>
+        ${hasImage ? `<img src="${friend.statusImageUrl}" class="friend-status-image" alt="Status image" loading="lazy" onclick="event.stopPropagation()">` : ''}
         <div class="status-time">${formatTimeAgo(friend.updatedAt)}</div>
       </div>
       <div style="display: flex; flex-direction: column; gap: 6px; align-self: flex-start; flex-shrink: 0;">
-        <button
-          class="btn btn-secondary btn-small nickname-btn"
-          data-conn-id="${friend.connectionId}"
-          data-current-nickname="${escapeHtml(friend.nickname || '')}"
-          data-real-name="${escapeHtml(friend.name)}"
-          title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}"
-          style="padding: 4px 8px; font-size: 11px;"
-        >${friend.nickname ? '✏️' : '🏷️'}</button>
-        <button
-          class="btn btn-secondary btn-small btn-small-danger remove-connection-btn"
-          data-conn-id="${friend.connectionId}"
-          style="padding: 4px 8px; font-size: 11px;"
-        >✕</button>
+        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${friend.connectionId}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding: 4px 8px; font-size: 11px;">${friend.nickname ? '✏️' : '🏷️'}</button>
+        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${friend.connectionId}" style="padding: 4px 8px; font-size: 11px;">✕</button>
       </div>
     `;
     container.appendChild(card);
   });
 
+  container.querySelectorAll('.user-status-card').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.btn')) return;
+      const friendId = card.dataset.friendId;
+      const friend = state.connections.find(c => c.friendId === friendId);
+      if (friend) openChat(friend);
+    });
+  });
+
   container.querySelectorAll('.nickname-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const connId = btn.dataset.connId;
       const currentNickname = btn.dataset.currentNickname;
       const realName = btn.dataset.realName;
 
       const input = await showNicknameModal({ realName, currentNickname });
-      if (input === null) return; // cancelled
+      if (input === null) return;
 
       try {
         await setConnectionNickname(connId, input);
@@ -463,7 +549,8 @@ function renderFriendsFeed() {
   });
 
   container.querySelectorAll('.remove-connection-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const connId = btn.dataset.connId;
       const confirmed = await showConfirmModal({
         icon: '💔',
@@ -485,7 +572,7 @@ function renderFriendsFeed() {
 }
 
 /* ==========================================
-   PENDING INVITES RENDERER
+   PENDING INVITES
    ========================================== */
 function renderPendingInvites() {
   const container = document.getElementById('pending-invites-container');
@@ -566,7 +653,7 @@ function renderPendingInvites() {
 }
 
 /* ==========================================
-   STATUS HISTORY RENDERER (friends' history)
+   STATUS HISTORY
    ========================================== */
 function renderStatusHistory(history, connections = []) {
   const container = document.getElementById('status-history-container');
@@ -579,9 +666,9 @@ function renderStatusHistory(history, connections = []) {
 
   container.innerHTML = history.map(entry => {
     const realName = entry.profile?.name || 'Unknown';
-    // Use nickname if set
     const conn = connections.find(c => c.friendId === entry.profile?.id);
     const displayName = conn?.nickname?.trim() || realName;
+    const hasImage = entry.status_image_url;
 
     return `
       <div class="history-item">
@@ -589,6 +676,7 @@ function renderStatusHistory(history, connections = []) {
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
           <span class="history-text">"${escapeHtml(entry.status_text)}"</span>
+          ${hasImage ? `<img src="${entry.status_image_url}" class="history-image" alt="Status image" loading="lazy">` : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
@@ -597,7 +685,149 @@ function renderStatusHistory(history, connections = []) {
 }
 
 /* ==========================================
-   CUSTOM MODAL HELPERS (replaces prompt/confirm)
+   CHAT / DM VIEW
+   ========================================== */
+async function openChat(friend) {
+  currentChatFriend = friend;
+  
+  document.getElementById('chat-friend-emoji').textContent = friend.statusEmoji;
+  document.getElementById('chat-friend-name').textContent = friend.displayName;
+  
+  document.querySelectorAll('.view-container').forEach(v => v.style.display = 'none');
+  const chatView = document.getElementById('chat-view');
+  if (chatView) chatView.style.display = 'flex';
+  
+  await loadChatMessages(friend.friendId);
+  await markMessagesAsRead(friend.friendId);
+  
+  friend.unreadCount = 0;
+  renderFriendsFeed();
+  
+  const container = document.getElementById('chat-messages');
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+async function loadChatMessages(friendId) {
+  const container = document.getElementById('chat-messages');
+  if (!container) return;
+  container.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
+
+  try {
+    const messages = await fetchDirectMessages(friendId);
+    const { data: { user } } = await client().auth.getUser();
+    
+    if (messages.length === 0) {
+      container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
+      return;
+    }
+
+    container.innerHTML = messages.map(msg => {
+      const isSent = msg.sender_id === user.id;
+      const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      return `
+        <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
+          ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
+          ${msg.image_url ? `<img src="${msg.image_url}" alt="Shared image" loading="lazy" onclick="window.open('${msg.image_url}', '_blank')">` : ''}
+          <span class="chat-bubble-time">${time}</span>
+        </div>
+      `;
+    }).join('');
+    
+    container.scrollTop = container.scrollHeight;
+  } catch (err) {
+    container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
+  }
+}
+
+async function sendChatMessage() {
+  const input = document.getElementById('chat-input');
+  const text = input?.value.trim() || '';
+  const sendBtn = document.getElementById('chat-send-btn');
+  
+  if (!text && !currentChatImage) return;
+  if (!currentChatFriend) return;
+  
+  sendBtn.disabled = true;
+  
+  try {
+    let imageUrl = null;
+    if (currentChatImage) {
+      showToast('Uploading image...');
+      imageUrl = await uploadStatusImage(currentChatImage);
+    }
+    
+    await sendDirectMessage(currentChatFriend.friendId, text, imageUrl);
+    if (input) input.value = '';
+    removeChatImage();
+    await loadChatMessages(currentChatFriend.friendId);
+  } catch (err) {
+    showToast(err.message || 'Failed to send', 'error');
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+function removeChatImage() {
+  currentChatImage = null;
+  const preview = document.getElementById('chat-image-preview');
+  const img = document.getElementById('chat-preview-img');
+  if (preview) preview.style.display = 'none';
+  if (img) img.src = '';
+  const fileInput = document.getElementById('chat-file-input');
+  const camInput = document.getElementById('chat-camera-input');
+  if (fileInput) fileInput.value = '';
+  if (camInput) camInput.value = '';
+}
+
+async function handleChatImage(file) {
+  if (!file) return;
+  try {
+    showToast('Compressing...');
+    const compressed = await compressImage(file);
+    currentChatImage = compressed;
+    const preview = document.getElementById('chat-image-preview');
+    const img = document.getElementById('chat-preview-img');
+    if (img) img.src = URL.createObjectURL(compressed);
+    if (preview) preview.style.display = 'block';
+  } catch (err) {
+    showToast('Failed to process image', 'error');
+  }
+}
+
+/* ==========================================
+   STATUS IMAGE HANDLERS
+   ========================================== */
+async function handleStatusImage(file) {
+  if (!file) return;
+  try {
+    showToast('Compressing image...');
+    const compressed = await compressImage(file);
+    currentStatusImage = compressed;
+    const preview = document.getElementById('status-image-preview');
+    const img = document.getElementById('status-preview-img');
+    if (img) img.src = URL.createObjectURL(compressed);
+    if (preview) preview.style.display = 'block';
+  } catch (err) {
+    showToast('Failed to process image', 'error');
+  }
+}
+
+function removeStatusImage() {
+  currentStatusImage = null;
+  currentStatusImageUrl = null;
+  const preview = document.getElementById('status-image-preview');
+  const img = document.getElementById('status-preview-img');
+  if (preview) preview.style.display = 'none';
+  if (img) img.src = '';
+  const fileInput = document.getElementById('status-file-input');
+  const camInput = document.getElementById('status-camera-input');
+  if (fileInput) fileInput.value = '';
+  if (camInput) camInput.value = '';
+}
+
+/* ==========================================
+   CUSTOM MODALS
    ========================================== */
 function showConfirmModal({ icon = '⚠️', title, body, okLabel = 'Confirm', okDanger = true }) {
   return new Promise((resolve) => {
@@ -669,8 +899,6 @@ function showNicknameModal({ realName, currentNickname = '' }) {
 
 /* ==========================================
    iOS POLLING FALLBACK
-   Supabase Realtime WebSockets get suspended on iOS
-   when the app is backgrounded. Poll every 30s as fallback.
    ========================================== */
 function startPollingFallback() {
   if (state.pollInterval) clearInterval(state.pollInterval);
@@ -678,19 +906,15 @@ function startPollingFallback() {
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  // Poll on iOS AND as a general fallback for any device where realtime drops
   state.pollInterval = setInterval(async () => {
     const channelStatus = state.realtimeChannel?.state;
     if (channelStatus !== 'joined') {
-      // Only reload if realtime is actually disconnected
       await loadDashboardData();
     }
-  }, isIOS ? 20000 : 45000); // 20s on iOS, 45s elsewhere
+  }, isIOS ? 20000 : 45000);
 
-  // Reload on visibility change (app comes to foreground)
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && state.userProfile) {
-      // Only reload if been hidden for more than 30s
       const now = Date.now();
       if (!startPollingFallback._lastVisible || now - startPollingFallback._lastVisible > 30000) {
         invalidateCache();
@@ -729,9 +953,7 @@ function registerServiceWorker() {
   }
 }
 
-// Register FCM token for native Android push notifications
 async function registerFCMToken() {
-  // Only runs inside Capacitor native app
   if (!window.Capacitor?.isNativePlatform()) return;
 
   try {
@@ -753,7 +975,6 @@ async function registerFCMToken() {
 
     PushNotifications.addListener('pushNotificationReceived', (notification) => {
       console.log('[Pulse] Push received:', notification);
-      // Reload dashboard when push arrives
       if (state.userProfile) {
         invalidateCache();
         loadDashboardData();
@@ -761,7 +982,6 @@ async function registerFCMToken() {
     });
 
     PushNotifications.addListener('pushNotificationActionPerformed', () => {
-      // User tapped the notification — make sure app is visible
       navigateTo('dashboard');
     });
 
@@ -794,11 +1014,8 @@ function requestNotificationPermission() {
 
     if (permission === 'granted') {
       showToast('Lockscreen alerts enabled! 🔔');
-
-      // Subscribe to Web Push for background notifications
       await subscribeToPushNotifications();
 
-      // Show a test notification
       setTimeout(() => {
         new Notification('Pulse is ready! 💫', {
           body: "You'll be notified when friends update their status.",
@@ -813,10 +1030,6 @@ function requestNotificationPermission() {
   if (header) header.insertAdjacentElement('afterend', banner);
 }
 
-/**
- * Subscribe to Web Push and save the subscription to Supabase.
- * This enables background notifications even when the app is closed.
- */
 async function subscribeToPushNotifications() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
     console.warn('[Pulse] Push not supported on this browser');
@@ -825,29 +1038,21 @@ async function subscribeToPushNotifications() {
 
   try {
     const reg = await navigator.serviceWorker.ready;
-    console.log('[Pulse] SW ready, checking push subscription...');
-
     let subscription = await reg.pushManager.getSubscription();
 
     if (!subscription) {
       const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-      console.log('[Pulse] VAPID key present:', !!VAPID_PUBLIC_KEY);
-
       if (!VAPID_PUBLIC_KEY) {
-        console.warn('[Pulse] VAPID_PUBLIC_KEY not set in env — background push disabled');
+        console.warn('[Pulse] VAPID_PUBLIC_KEY not set in env');
         showToast('Notifications enabled (in-app only — VAPID key missing)', 'info');
         return;
       }
 
-      console.log('[Pulse] Subscribing to push...');
       const keyBytes = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
       subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: keyBytes
       });
-      console.log('[Pulse] Push subscription created:', subscription.endpoint);
-    } else {
-      console.log('[Pulse] Already subscribed:', subscription.endpoint);
     }
 
     await savePushSubscription(subscription);
@@ -865,15 +1070,9 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
-/**
- * Sends FRIEND_STATUS_UPDATE to the SW which shows:
- *   1. A pop-up heads-up banner (like Telegram/Snapchat)
- *   2. A persistent summary notification that stays on the lockscreen
- */
 function showPersistentStatusNotification(friendName, emoji, statusText) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
-  // Try SW first (better — shows on lockscreen)
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       type: 'FRIEND_STATUS_UPDATE',
@@ -884,8 +1083,6 @@ function showPersistentStatusNotification(friendName, emoji, statusText) {
     });
   }
 
-  // Always also show a direct notification as fallback
-  // (works even if SW message fails)
   try {
     new Notification(`${emoji} ${friendName}`, {
       body: `"${statusText}"`,
@@ -900,9 +1097,6 @@ function showPersistentStatusNotification(friendName, emoji, statusText) {
   }
 }
 
-/**
- * Show a notification when a friend updates their status.
- */
 function notifyFriendStatusUpdate(friendName, emoji, statusText) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   showPersistentStatusNotification(friendName, emoji, statusText);
@@ -913,7 +1107,6 @@ function notifyFriendStatusUpdate(friendName, emoji, statusText) {
    ========================================== */
 function initEventListeners() {
 
-  // ── Config: Save Supabase credentials ──────────────────────────────
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const url = document.getElementById('config-url')?.value.trim();
     const key = document.getElementById('config-key')?.value.trim();
@@ -931,7 +1124,6 @@ function initEventListeners() {
     }
   });
 
-  // ── Config: Toggle anon key visibility ─────────────────────────────
   document.getElementById('btn-toggle-key-visibility')?.addEventListener('click', () => {
     const keyInput = document.getElementById('config-key');
     const btn = document.getElementById('btn-toggle-key-visibility');
@@ -941,25 +1133,19 @@ function initEventListeners() {
     if (btn) btn.textContent = isHidden ? '🙈' : '👁';
   });
 
-  // Allow Enter key in config fields
   ['config-url', 'config-key'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') document.getElementById('btn-save-config')?.click();
     });
   });
 
-  // ── Config: Reset from dashboard — accessible only via config screen directly
-
-  // ── Auth: Show config from auth screen ─────────────────────────────
   document.getElementById('btn-show-config')?.addEventListener('click', () => {
     navigateTo('config');
   });
 
-  // ── Auth: Tab switcher ─────────────────────────────────────────────
   document.getElementById('tab-signin')?.addEventListener('click', () => setAuthMode('signin'));
   document.getElementById('tab-signup')?.addEventListener('click', () => setAuthMode('signup'));
 
-  // ── Auth: Toggle password visibility ──────────────────────────────
   document.getElementById('btn-toggle-password')?.addEventListener('click', () => {
     const inp = document.getElementById('auth-password');
     const btn = document.getElementById('btn-toggle-password');
@@ -976,335 +1162,4 @@ function initEventListeners() {
     if (btn) btn.textContent = inp.type === 'password' ? '👁' : '🙈';
   });
 
-  // ── Auth: Google OAuth ─────────────────────────────────────────────
-  document.getElementById('btn-google-auth')?.addEventListener('click', async () => {
-    try {
-      await signInWithGoogle();
-      // Page will redirect to Google — no further action needed here
-    } catch (err) {
-      showAuthError(err.message || 'Google sign-in failed.');
-    }
-  });
-
-  // ── Auth: Forgot password ──────────────────────────────────────────
-  document.getElementById('btn-forgot-password')?.addEventListener('click', async () => {
-    const email = document.getElementById('auth-email')?.value.trim();
-    if (!email || !email.includes('@')) {
-      showAuthError('Enter your email address above first.');
-      return;
-    }
-    try {
-      await sendPasswordReset(email);
-      showToast('Password reset email sent!');
-    } catch (err) {
-      showAuthError(err.message || 'Failed to send reset email.');
-    }
-  });
-
-  // ── Auth: Submit (Sign In or Sign Up) ──────────────────────────────
-  const btnAuthSubmit = document.getElementById('btn-auth-submit');
-  btnAuthSubmit?.addEventListener('click', async () => {
-    clearAuthError();
-    const email    = document.getElementById('auth-email')?.value.trim();
-    const password = document.getElementById('auth-password')?.value;
-    const name     = document.getElementById('auth-name')?.value.trim();
-    const confirm  = document.getElementById('auth-password-confirm')?.value;
-
-    // Validation
-    if (!email || !email.includes('@')) {
-      showAuthError('Please enter a valid email address.'); return;
-    }
-    if (!password || password.length < 6) {
-      showAuthError('Password must be at least 6 characters.'); return;
-    }
-    if (state.authMode === 'signup') {
-      if (!name) { showAuthError('Please enter a display name.'); return; }
-      if (password !== confirm) { showAuthError('Passwords do not match.'); return; }
-    }
-
-    setButtonLoading(btnAuthSubmit, true, state.authMode === 'signin' ? 'Signing in...' : 'Creating account...');
-
-    try {
-      if (state.authMode === 'signin') {
-        await signInWithPassword(email, password);
-        showToast('Welcome back!');
-        await checkNavigationState();
-      } else {
-        const result = await signUpWithPassword(email, password, name);
-        // Email confirmation required — Supabase returns user but no session
-        if (result.user && !result.session) {
-          // Show a clear confirmation screen
-          showAuthError('');
-          const card = document.getElementById('auth-email-card') || document.querySelector('.auth-form-card');
-          if (card) {
-            card.innerHTML = `
-              <div style="text-align: center; display: flex; flex-direction: column; gap: 16px; padding: 8px 0;">
-                <div style="font-size: 48px;">📬</div>
-                <h2 style="font-size: 20px;">Check your email</h2>
-                <p style="font-size: 14px; color: hsl(var(--text-secondary)); line-height: 1.6;">
-                  We sent a confirmation link to<br>
-                  <strong style="color: #a5b4fc;">${escapeHtml(email)}</strong>
-                </p>
-                <p style="font-size: 13px; color: hsl(var(--text-muted)); line-height: 1.5;">
-                  Click the link in the email to verify your account, then come back and sign in.
-                </p>
-                <button id="btn-back-to-signin" class="btn btn-primary">
-                  <span>Go to Sign In</span>
-                </button>
-              </div>
-            `;
-            document.getElementById('btn-back-to-signin')?.addEventListener('click', () => {
-              // Reload auth view cleanly
-              navigateTo('auth');
-              setAuthMode('signin');
-            });
-          }
-          return;
-        }
-        showToast('Account created! Welcome to Pulse 🎉');
-        await checkNavigationState();
-      }
-    } catch (err) {
-      const msg = err.message || '';
-      if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
-        showAuthError('Please confirm your email first. Check your inbox for the verification link.');
-      } else if (msg.toLowerCase().includes('invalid login credentials')) {
-        showAuthError('Incorrect email or password. Please try again.');
-      } else if (msg.toLowerCase().includes('user already registered')) {
-        showAuthError('An account with this email already exists. Try signing in instead.');
-        setAuthMode('signin');
-      } else {
-        showAuthError(msg || 'Something went wrong. Please try again.');
-      }
-    } finally {
-      setButtonLoading(btnAuthSubmit, false, state.authMode === 'signin' ? 'Sign In' : 'Create Account');
-    }
-  });
-
-  // Allow Enter key to submit
-  ['auth-email', 'auth-password', 'auth-name', 'auth-password-confirm'].forEach(id => {
-    document.getElementById(id)?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') btnAuthSubmit?.click();
-    });
-  });
-
-  // ── Dashboard: Sign out ────────────────────────────────────────────
-  document.getElementById('btn-signout')?.addEventListener('click', async () => {
-    const confirmed = await showConfirmModal({
-      icon: '👋',
-      title: 'Sign out?',
-      body: 'You will be signed out of Pulse.',
-      okLabel: 'Sign Out',
-      okDanger: false
-    });
-    if (!confirmed) return;
-    try {
-      await signOutUser();
-      state.userProfile = null;
-      state.connections = [];
-      state.realtimeChannel?.unsubscribe();
-      state.realtimeChannel = null;
-      clearInterval(state.clockInterval);
-      clearInterval(state.pollInterval);
-      showToast('Signed out.');
-      checkNavigationState();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // ── Status Modal: Open ─────────────────────────────────────────────
-  document.getElementById('btn-open-status-modal')?.addEventListener('click', async () => {
-    // If profile not loaded yet, try to fetch it
-    if (!state.userProfile) {
-      try {
-        const profile = await getSessionAndProfile(_savedHash, _savedSearch);
-        if (profile) state.userProfile = profile;
-      } catch (e) {
-        showToast('Could not load profile. Please refresh.', 'error');
-        return;
-      }
-    }
-    if (!state.userProfile) {
-      showToast('Profile not loaded. Please refresh the page.', 'error');
-      return;
-    }
-
-    const nameInput = document.getElementById('status-name-input');
-    const textInput = document.getElementById('status-text-input');
-    if (nameInput) nameInput.value = state.userProfile.name || '';
-    if (textInput) textInput.value = state.userProfile.status_text || '';
-
-    state.selectedEmoji = state.userProfile.status_emoji || '😊';
-
-    // Init emoji picker with current emoji selected
-    initEmojiPicker();
-    selectEmoji(state.selectedEmoji);
-
-    document.getElementById('status-modal')?.classList.add('show');
-  });
-
-  // ── Status Modal: Close ────────────────────────────────────────────
-  document.getElementById('btn-close-status-modal')?.addEventListener('click', () => {
-    document.getElementById('status-modal')?.classList.remove('show');
-  });
-
-  // Close modal on backdrop click — only if clicking the dark overlay itself
-  document.getElementById('status-modal')?.addEventListener('click', (e) => {
-    if (e.target.id === 'status-modal') {
-      e.currentTarget.classList.remove('show');
-    }
-  });
-
-  // ── Status Modal: Emoji picker — handled dynamically by initEmojiPicker()
-
-  // ── Status Modal: Save ─────────────────────────────────────────────
-  const btnSaveStatus = document.getElementById('btn-save-status');
-  btnSaveStatus?.addEventListener('click', async () => {
-    const name = document.getElementById('status-name-input')?.value.trim();
-    const text = document.getElementById('status-text-input')?.value.trim();
-
-    if (!name) {
-      showToast('Please enter a display name.', 'error');
-      return;
-    }
-
-    setButtonLoading(btnSaveStatus, true, 'Pulsing out...');
-    try {
-      const updated = await updateStatus(name, state.selectedEmoji, text || 'Available');
-      state.userProfile = { ...state.userProfile, ...updated };
-      document.getElementById('status-modal')?.classList.remove('show');
-      showToast('Status updated!');
-      updateMyStatusUI();
-      updateSimulatorUI();
-
-      // Notify friends via server-side push (works when their app is closed)
-      notifyFriendsOfUpdate(
-        state.userProfile.id,
-        name,
-        state.selectedEmoji,
-        text || 'Available'
-      );
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setButtonLoading(btnSaveStatus, false, 'Save & Pulse Out!');
-    }
-  });
-
-  // ── Connections: Send invite ───────────────────────────────────────
-  const btnSendInvite = document.getElementById('btn-send-invite');
-  btnSendInvite?.addEventListener('click', async () => {
-    const input = document.getElementById('friend-id-input');
-    const query = input?.value.trim();
-
-    if (!query) {
-      showToast("Enter your friend's Pulse ID or display name.", 'error');
-      return;
-    }
-
-    setButtonLoading(btnSendInvite, true, '...');
-    try {
-      await sendConnectionRequest(query);
-      showToast('Connection request sent!');
-      if (input) input.value = '';
-      await loadDashboardData();
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setButtonLoading(btnSendInvite, false, 'Connect');
-    }
-  });
-
-  // Allow Enter key in friend ID input
-  document.getElementById('friend-id-input')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') document.getElementById('btn-send-invite')?.click();
-  });
-
-  // ── Refresh button ────────────────────────────────────────────────
-  document.getElementById('btn-refresh')?.addEventListener('click', async () => {
-    const icon = document.getElementById('refresh-icon');
-    if (icon) icon.style.animation = 'spin 0.6s linear infinite';
-    invalidateCache();
-    try {
-      await loadDashboardData();
-      showToast('Refreshed!');
-    } catch {
-      showToast('Could not refresh. Check your connection.', 'error');
-    } finally {
-      if (icon) icon.style.animation = '';
-    }
-  });
-
-  // ── Copy Pulse ID ──────────────────────────────────────────────────
-  function copyMyId() {
-    const id = document.getElementById('my-id-display')?.textContent;
-    if (id && id !== 'Loading...') {
-      navigator.clipboard.writeText(id).then(() => showToast('Pulse ID copied!'));
-    }
-  }
-  document.getElementById('btn-copy-id')?.addEventListener('click', copyMyId);
-  document.getElementById('my-id-display')?.addEventListener('click', copyMyId);
-
-  // Simulator toggle removed — lockscreen preview panel removed
-}
-
-/* ==========================================
-   BUTTON LOADING STATE HELPER
-   ========================================== */
-function setButtonLoading(btn, loading, label) {
-  if (!btn) return;
-  btn.disabled = loading;
-  const span = btn.querySelector('span');
-  if (span) {
-    span.textContent = label;
-  } else {
-    btn.textContent = label;
-  }
-}
-
-/* ==========================================
-   BOOT
-   ========================================== */
-document.addEventListener('DOMContentLoaded', () => {
-  registerServiceWorker();
-  initEventListeners();
-  checkNavigationState();
-
-  // Handle deep link OAuth callback on native Android
-  if (window.Capacitor?.isNativePlatform()) {
-    import('@capacitor/browser').then(({ Browser }) => {
-      Browser.addListener('browserFinished', () => {
-        // Browser closed — check if we got a session
-        setTimeout(() => checkNavigationState(), 500);
-      });
-    });
-
-    // Listen for app URL open (deep link)
-    import('@capacitor/app').then(({ App }) => {
-      App.addListener('appUrlOpen', async (event) => {
-        const url = event.url;
-        if (url.includes('login-callback')) {
-          // Extract tokens from URL and establish session
-          const urlObj = new URL(url.replace('com.pulse.statusapp://', 'https://pulse.app/'));
-          const accessToken = urlObj.searchParams.get('access_token') ||
-            new URLSearchParams(urlObj.hash.substring(1)).get('access_token');
-          const refreshToken = urlObj.searchParams.get('refresh_token') ||
-            new URLSearchParams(urlObj.hash.substring(1)).get('refresh_token');
-
-          if (accessToken) {
-            const { setSessionFromTokens } = await import('./supabase.js');
-            await setSessionFromTokens(accessToken, refreshToken || '');
-          }
-          await checkNavigationState();
-        }
-      });
-    }).catch(() => {});
-  }
-});
-
-/* ==========================================
-   SIMULATOR — REMOVED (no-ops kept for safety)
-   ========================================== */
-function updateSimulatorUI() { /* no-op */ }
-function startSimulatorClock() { /* no-op */ }
+  document.getElementById('btn-google-auth')?.addEventListener('
