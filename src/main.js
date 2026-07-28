@@ -84,7 +84,7 @@ function invalidateCache() {
 /* ==========================================
    ONLINE PRESENCE — 60 SECOND THRESHOLD
    ========================================== */
-const ONLINE_THRESHOLD_MS = 60 * 1000; // 60 seconds
+const ONLINE_THRESHOLD_MS = 60 * 1000;
 
 function isOnline(lastSeenTimestamp) {
   if (!lastSeenTimestamp) return false;
@@ -98,7 +98,7 @@ function startHeartbeat() {
     if (document.visibilityState === 'visible') {
       updateLastSeen().catch(() => {});
     }
-  }, 20000); // beat every 20s to stay safely under 60s
+  }, 20000);
 }
 
 /* ==========================================
@@ -1166,107 +1166,257 @@ function initEventListeners() {
     try {
       await signInWithGoogle();
     } catch (err) {
-      showAuthError(err.message || 'Google sign-in failed.');
+      showAuthError(err.message);
     }
   });
 
-  document.getElementById('btn-forgot-password')?.addEventListener('click', async () => {
+  document.getElementById('auth-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    clearAuthError();
+
     const email = document.getElementById('auth-email')?.value.trim();
-    if (!email || !email.includes('@')) {
-      showAuthError('Enter your email address above first.');
+    const password = document.getElementById('auth-password')?.value;
+    const name = document.getElementById('auth-name')?.value.trim();
+    const confirm = document.getElementById('auth-password-confirm')?.value;
+
+    if (!email || !password) {
+      showAuthError('Please enter email and password.');
+      return;
+    }
+
+    try {
+      if (state.authMode === 'signup') {
+        if (!name) {
+          showAuthError('Please enter your name.');
+          return;
+        }
+        if (password !== confirm) {
+          showAuthError('Passwords do not match.');
+          return;
+        }
+        if (password.length < 6) {
+          showAuthError('Password must be at least 6 characters.');
+          return;
+        }
+        await signUpWithPassword(email, password, name);
+        showToast('Account created! Check your email to confirm.');
+        setAuthMode('signin');
+      } else {
+        await signInWithPassword(email, password);
+        showToast('Welcome back! 💫');
+      }
+    } catch (err) {
+      showAuthError(err.message);
+    }
+  });
+
+  document.getElementById('link-forgot')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email')?.value.trim();
+    if (!email) {
+      showAuthError('Enter your email above first.');
       return;
     }
     try {
       await sendPasswordReset(email);
-      showToast('Password reset email sent!');
+      showToast('Password reset link sent! Check your email.');
     } catch (err) {
-      showAuthError(err.message || 'Failed to send reset email.');
+      showAuthError(err.message);
     }
-  });
-
-  const btnAuthSubmit = document.getElementById('btn-auth-submit');
-  btnAuthSubmit?.addEventListener('click', async () => {
-    clearAuthError();
-    const email    = document.getElementById('auth-email')?.value.trim();
-    const password = document.getElementById('auth-password')?.value;
-    const name     = document.getElementById('auth-name')?.value.trim();
-    const confirm  = document.getElementById('auth-password-confirm')?.value;
-
-    if (!email || !email.includes('@')) {
-      showAuthError('Please enter a valid email address.'); return;
-    }
-    if (!password || password.length < 6) {
-      showAuthError('Password must be at least 6 characters.'); return;
-    }
-    if (state.authMode === 'signup') {
-      if (!name) { showAuthError('Please enter a display name.'); return; }
-      if (password !== confirm) { showAuthError('Passwords do not match.'); return; }
-    }
-
-    setButtonLoading(btnAuthSubmit, true, state.authMode === 'signin' ? 'Signing in...' : 'Creating account...');
-
-    try {
-      if (state.authMode === 'signin') {
-        await signInWithPassword(email, password);
-        showToast('Welcome back!');
-        await checkNavigationState();
-      } else {
-        const result = await signUpWithPassword(email, password, name);
-        if (result.user && !result.session) {
-          showAuthError('');
-          const card = document.getElementById('auth-email-card') || document.querySelector('.auth-form-card');
-          if (card) {
-            card.innerHTML = `
-              <div style="text-align: center; display: flex; flex-direction: column; gap: 16px; padding: 8px 0;">
-                <div style="font-size: 48px;">📬</div>
-                <h2 style="font-size: 20px;">Check your email</h2>
-                <p style="font-size: 14px; color: hsl(var(--text-secondary)); line-height: 1.6;">
-                  We sent a confirmation link to<br>
-                  <strong style="color: #a5b4fc;">${escapeHtml(email)}</strong>
-                </p>
-                <p style="font-size: 13px; color: hsl(var(--text-muted)); line-height: 1.5;">
-                  Click the link in the email to verify your account, then come back and sign in.
-                </p>
-                <button id="btn-back-to-signin" class="btn btn-primary">
-                  <span>Go to Sign In</span>
-                </button>
-              </div>
-            `;
-            document.getElementById('btn-back-to-signin')?.addEventListener('click', () => {
-              navigateTo('auth');
-              setAuthMode('signin');
-            });
-          }
-          return;
-        }
-        showToast('Account created! Welcome to Pulse 🎉');
-        await checkNavigationState();
-      }
-    } catch (err) {
-      const msg = err.message || '';
-      if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
-        showAuthError('Please confirm your email first. Check your inbox for the verification link.');
-      } else if (msg.toLowerCase().includes('invalid login credentials')) {
-        showAuthError('Incorrect email or password. Please try again.');
-      } else if (msg.toLowerCase().includes('user already registered')) {
-        showAuthError('An account with this email already exists. Try signing in instead.');
-        setAuthMode('signin');
-      } else {
-        showAuthError(msg || 'Something went wrong. Please try again.');
-      }
-    } finally {
-      setButtonLoading(btnAuthSubmit, false, state.authMode === 'signin' ? 'Sign In' : 'Create Account');
-    }
-  });
-
-  ['auth-email', 'auth-password', 'auth-name', 'auth-password-confirm'].forEach(id => {
-    document.getElementById(id)?.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') btnAuthSubmit?.click();
-    });
   });
 
   document.getElementById('btn-signout')?.addEventListener('click', async () => {
     const confirmed = await showConfirmModal({
       icon: '👋',
       title: 'Sign out?',
-      body: 'You will
+      body: 'You will stop receiving real-time updates until you sign back in.',
+      okLabel: 'Sign Out',
+      okDanger: true
+    });
+    if (!confirmed) return;
+
+    try {
+      await signOutUser();
+      state.userProfile = null;
+      state.connections = [];
+      if (state.realtimeChannel) {
+        state.realtimeChannel.unsubscribe();
+        state.realtimeChannel = null;
+      }
+      invalidateCache();
+      navigateTo('auth');
+      setAuthMode('signin');
+      showToast('Signed out successfully.');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  document.getElementById('status-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!state.userProfile) return;
+
+    const textInput = document.getElementById('status-text-input');
+    const text = textInput?.value.trim() || '';
+
+    try {
+      let imageUrl = state.userProfile.status_image_url || null;
+
+      if (currentStatusImage) {
+        showToast('Uploading image...');
+        imageUrl = await uploadStatusImage(currentStatusImage);
+        currentStatusImageUrl = imageUrl;
+      }
+
+      await updateStatus(state.selectedEmoji, text, imageUrl);
+      showToast('Status updated! 💫');
+      if (textInput) textInput.value = '';
+
+      removeStatusImage();
+      await notifyFriendsOfUpdate();
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to update status', 'error');
+    }
+  });
+
+  document.getElementById('status-file-input')?.addEventListener('change', (e) => {
+    if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
+  });
+
+  document.getElementById('status-camera-input')?.addEventListener('change', (e) => {
+    if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
+  });
+
+  document.getElementById('btn-remove-status-image')?.addEventListener('click', () => {
+    removeStatusImage();
+  });
+
+  document.getElementById('connection-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = document.getElementById('connection-id-input');
+    const id = input?.value.trim();
+
+    if (!id) {
+      showToast('Please enter a Pulse ID.', 'error');
+      return;
+    }
+
+    try {
+      await sendConnectionRequest(id);
+      showToast('Connection request sent! ✉️');
+      if (input) input.value = '';
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Failed to send request', 'error');
+    }
+  });
+
+  document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
+
+  document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  document.getElementById('chat-file-input')?.addEventListener('change', (e) => {
+    if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
+  });
+
+  document.getElementById('chat-camera-input')?.addEventListener('change', (e) => {
+    if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
+  });
+
+  document.getElementById('btn-remove-chat-image')?.addEventListener('click', () => {
+    removeChatImage();
+  });
+
+  document.getElementById('btn-chat-back')?.addEventListener('click', () => {
+    currentChatFriend = null;
+    navigateTo('dashboard');
+    loadDashboardData();
+  });
+
+  document.getElementById('my-id-display')?.addEventListener('click', async () => {
+    if (!state.userProfile?.id) return;
+    try {
+      await navigator.clipboard.writeText(state.userProfile.id);
+      showToast('Pulse ID copied to clipboard! 📋');
+    } catch (err) {
+      showToast('Failed to copy ID', 'error');
+    }
+  });
+
+  document.getElementById('btn-reset-config')?.addEventListener('click', async () => {
+    const confirmed = await showConfirmModal({
+      icon: '⚙️',
+      title: 'Reset configuration?',
+      body: 'This will clear your Supabase settings and sign you out.',
+      okLabel: 'Reset',
+      okDanger: true
+    });
+    if (!confirmed) return;
+
+    resetSupabaseConfig();
+    state.userProfile = null;
+    state.connections = [];
+    if (state.realtimeChannel) {
+      state.realtimeChannel.unsubscribe();
+      state.realtimeChannel = null;
+    }
+    invalidateCache();
+    navigateTo('config');
+    showToast('Configuration reset.');
+  });
+}
+
+/* ==========================================
+   LOCKSCREEN SIMULATOR
+   ========================================== */
+function startSimulatorClock() {
+  if (state.clockInterval) clearInterval(state.clockInterval);
+
+  const updateClock = () => {
+    const now = new Date();
+    const timeEl = document.getElementById('sim-time');
+    const dateEl = document.getElementById('sim-date');
+    if (timeEl) {
+      timeEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    if (dateEl) {
+      dateEl.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    }
+  };
+
+  updateClock();
+  state.clockInterval = setInterval(updateClock, 1000);
+}
+
+function updateSimulatorUI() {
+  const simEmoji = document.getElementById('sim-emoji');
+  const simText = document.getElementById('sim-text');
+  const simImage = document.getElementById('sim-image');
+
+  if (simEmoji) simEmoji.textContent = state.userProfile?.status_emoji || '😊';
+  if (simText) simText.textContent = state.userProfile?.status_text || 'Available';
+  if (simImage) {
+    if (state.userProfile?.status_image_url) {
+      simImage.src = state.userProfile.status_image_url;
+      simImage.style.display = 'block';
+    } else {
+      simImage.style.display = 'none';
+    }
+  }
+}
+
+/* ==========================================
+   INIT
+   ========================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  initEmojiPicker();
+  initEventListeners();
+  registerServiceWorker();
+  checkNavigationState();
+});
