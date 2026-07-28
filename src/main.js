@@ -84,7 +84,7 @@ function invalidateCache() {
 /* ==========================================
    ONLINE PRESENCE — 60 SECOND THRESHOLD
    ========================================== */
-const ONLINE_THRESHOLD_MS = 60 * 1000;
+const ONLINE_THRESHOLD_MS = 60 * 1000; // 60 seconds
 
 function isOnline(lastSeenTimestamp) {
   if (!lastSeenTimestamp) return false;
@@ -98,7 +98,7 @@ function startHeartbeat() {
     if (document.visibilityState === 'visible') {
       updateLastSeen().catch(() => {});
     }
-  }, 20000);
+  }, 20000); // beat every 20s to stay safely under 60s
 }
 
 /* ==========================================
@@ -1162,4 +1162,111 @@ function initEventListeners() {
     if (btn) btn.textContent = inp.type === 'password' ? '👁' : '🙈';
   });
 
-  document.getElementById('btn-google-auth')?.addEventListener('
+  document.getElementById('btn-google-auth')?.addEventListener('click', async () => {
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      showAuthError(err.message || 'Google sign-in failed.');
+    }
+  });
+
+  document.getElementById('btn-forgot-password')?.addEventListener('click', async () => {
+    const email = document.getElementById('auth-email')?.value.trim();
+    if (!email || !email.includes('@')) {
+      showAuthError('Enter your email address above first.');
+      return;
+    }
+    try {
+      await sendPasswordReset(email);
+      showToast('Password reset email sent!');
+    } catch (err) {
+      showAuthError(err.message || 'Failed to send reset email.');
+    }
+  });
+
+  const btnAuthSubmit = document.getElementById('btn-auth-submit');
+  btnAuthSubmit?.addEventListener('click', async () => {
+    clearAuthError();
+    const email    = document.getElementById('auth-email')?.value.trim();
+    const password = document.getElementById('auth-password')?.value;
+    const name     = document.getElementById('auth-name')?.value.trim();
+    const confirm  = document.getElementById('auth-password-confirm')?.value;
+
+    if (!email || !email.includes('@')) {
+      showAuthError('Please enter a valid email address.'); return;
+    }
+    if (!password || password.length < 6) {
+      showAuthError('Password must be at least 6 characters.'); return;
+    }
+    if (state.authMode === 'signup') {
+      if (!name) { showAuthError('Please enter a display name.'); return; }
+      if (password !== confirm) { showAuthError('Passwords do not match.'); return; }
+    }
+
+    setButtonLoading(btnAuthSubmit, true, state.authMode === 'signin' ? 'Signing in...' : 'Creating account...');
+
+    try {
+      if (state.authMode === 'signin') {
+        await signInWithPassword(email, password);
+        showToast('Welcome back!');
+        await checkNavigationState();
+      } else {
+        const result = await signUpWithPassword(email, password, name);
+        if (result.user && !result.session) {
+          showAuthError('');
+          const card = document.getElementById('auth-email-card') || document.querySelector('.auth-form-card');
+          if (card) {
+            card.innerHTML = `
+              <div style="text-align: center; display: flex; flex-direction: column; gap: 16px; padding: 8px 0;">
+                <div style="font-size: 48px;">📬</div>
+                <h2 style="font-size: 20px;">Check your email</h2>
+                <p style="font-size: 14px; color: hsl(var(--text-secondary)); line-height: 1.6;">
+                  We sent a confirmation link to<br>
+                  <strong style="color: #a5b4fc;">${escapeHtml(email)}</strong>
+                </p>
+                <p style="font-size: 13px; color: hsl(var(--text-muted)); line-height: 1.5;">
+                  Click the link in the email to verify your account, then come back and sign in.
+                </p>
+                <button id="btn-back-to-signin" class="btn btn-primary">
+                  <span>Go to Sign In</span>
+                </button>
+              </div>
+            `;
+            document.getElementById('btn-back-to-signin')?.addEventListener('click', () => {
+              navigateTo('auth');
+              setAuthMode('signin');
+            });
+          }
+          return;
+        }
+        showToast('Account created! Welcome to Pulse 🎉');
+        await checkNavigationState();
+      }
+    } catch (err) {
+      const msg = err.message || '';
+      if (msg.toLowerCase().includes('email not confirmed') || msg.toLowerCase().includes('not confirmed')) {
+        showAuthError('Please confirm your email first. Check your inbox for the verification link.');
+      } else if (msg.toLowerCase().includes('invalid login credentials')) {
+        showAuthError('Incorrect email or password. Please try again.');
+      } else if (msg.toLowerCase().includes('user already registered')) {
+        showAuthError('An account with this email already exists. Try signing in instead.');
+        setAuthMode('signin');
+      } else {
+        showAuthError(msg || 'Something went wrong. Please try again.');
+      }
+    } finally {
+      setButtonLoading(btnAuthSubmit, false, state.authMode === 'signin' ? 'Sign In' : 'Create Account');
+    }
+  });
+
+  ['auth-email', 'auth-password', 'auth-name', 'auth-password-confirm'].forEach(id => {
+    document.getElementById(id)?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') btnAuthSubmit?.click();
+    });
+  });
+
+  document.getElementById('btn-signout')?.addEventListener('click', async () => {
+    const confirmed = await showConfirmModal({
+      icon: '👋',
+      title: 'Sign out?',
+      body: 'You will
