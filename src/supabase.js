@@ -359,12 +359,10 @@ export async function fetchConnections() {
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
     // viewer_nickname: the private label YOU set for this friend — only visible to you
-    // Falls back to old nickname column for backwards compat with existing data
     const myNickname = conn.viewer_nickname || null;
 
-    // friend_name_snapshot: their name at connection time — frozen, won't change
-    // Falls back to live profile name if snapshot not yet set (old connections)
-    const friendName = conn.friend_name_snapshot || friend?.name || 'Unknown';
+    // Use live profile name as primary — snapshot is only a fallback if join failed
+    const friendName = friend?.name || conn.friend_name_snapshot || 'Unknown';
 
     return {
       connectionId: conn.id,

@@ -367,3 +367,11 @@ where c.friend_name_snapshot is null
   and p.id = c.user_id;
 
 -- ====================================================================
+
+-- ====================================================================
+-- HOTFIX: Clear bad friend_name_snapshot data caused by wrong backfill
+-- Run this NOW if friend names were replaced with your own name.
+-- It nulls out all snapshots so the app falls back to live profile names.
+-- ====================================================================
+update public.connections set friend_name_snapshot = null;
+-- ====================================================================
