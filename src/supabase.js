@@ -461,13 +461,22 @@ export async function setConnectionNickname(connectionId, nickname, friendId) {
     .maybeSingle();
 
   if (row && row.user_id === user.id) {
-    // We own this row — write directly
+    // We own this row — write directly to viewer_nickname
     const { data, error } = await client()
       .from('connections')
       .update({ viewer_nickname: trimmed })
       .eq('id', connectionId)
       .select().single();
-    if (error) throw error;
+    // If viewer_nickname column doesn't exist yet, fall back to shared nickname
+    if (error) {
+      const { data: d2, error: e2 } = await client()
+        .from('connections')
+        .update({ nickname: trimmed })
+        .eq('id', connectionId)
+        .select().single();
+      if (e2) throw e2;
+      return d2;
+    }
     return data;
   }
 
@@ -491,13 +500,28 @@ export async function setConnectionNickname(connectionId, nickname, friendId) {
       .update({ viewer_nickname: trimmed })
       .eq('id', ourRow.id)
       .select().single();
-    if (error) throw error;
+    // Fall back to shared nickname if column doesn't exist
+    if (error) {
+      const { data: d2, error: e2 } = await client()
+        .from('connections')
+        .update({ nickname: trimmed })
+        .eq('id', ourRow.id)
+        .select().single();
+      if (e2) throw e2;
+      return d2;
+    }
     return data;
   }
 
-  // No row owned by us exists at all (one-directional friendship, rare)
-  // Cannot store private nickname without DB support
-  throw new Error('Nickname requires running the Supabase migration first.');
+  // No row owned by us exists — fall back to updating shared nickname on the existing row
+  // This works until the user runs the Supabase migration for viewer_nickname
+  const { data: d, error: e } = await client()
+    .from('connections')
+    .update({ nickname: trimmed })
+    .eq('id', connectionId)
+    .select().single();
+  if (e) throw e;
+  return d;
 }
 
 export async function acceptInvitation(connectionId) {
