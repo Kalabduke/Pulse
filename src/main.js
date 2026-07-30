@@ -107,7 +107,7 @@ function startHeartbeat() {
 /* ==========================================
    IMAGE COMPRESSION
    ========================================== */
-function compressImage(file, maxWidth = 1200, quality = 0.8) {
+function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -117,7 +117,13 @@ function compressImage(file, maxWidth = 1200, quality = 0.8) {
         let w = img.width, h = img.height;
         if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; }
         canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const ctx = canvas.getContext('2d');
+        if (mirrorFix) {
+          // Un-mirror front camera: flip horizontally
+          ctx.translate(w, 0);
+          ctx.scale(-1, 1);
+        }
+        ctx.drawImage(img, 0, 0, w, h);
         canvas.toBlob((blob) => {
           resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
         }, 'image/jpeg', quality);
@@ -357,24 +363,35 @@ function updateMyStatusUI() {
 
   const myName = document.getElementById('my-name');
   const myAvatar = document.getElementById('my-avatar');
+  const myAvatarContainer = document.getElementById('my-avatar-container');
   const myStatusBubble = document.getElementById('my-status-bubble');
   const myStatusImage = document.getElementById('my-status-image');
   const idDisplay = document.getElementById('my-id-display');
   const myDot = document.getElementById('my-pulse-dot');
 
   if (myName) myName.textContent = state.userProfile.name || 'My Status';
-  if (myAvatar) myAvatar.textContent = state.userProfile.status_emoji || '👋';
+
+  // Show photo in avatar circle if available, else emoji
+  if (myAvatarContainer) {
+    if (state.userProfile.status_image_url) {
+      myAvatarContainer.classList.add('has-photo');
+      if (myAvatar) {
+        myAvatar.innerHTML = `<img src="${escapeHtml(state.userProfile.status_image_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`;
+      }
+    } else {
+      myAvatarContainer.classList.remove('has-photo');
+      if (myAvatar) myAvatar.textContent = state.userProfile.status_emoji || '👋';
+    }
+  } else {
+    if (myAvatar) myAvatar.textContent = state.userProfile.status_emoji || '👋';
+  }
+
   if (myStatusBubble) {
     myStatusBubble.textContent = `"${state.userProfile.status_text || 'Available'}"`;
   }
-  if (myStatusImage) {
-    if (state.userProfile.status_image_url) {
-      myStatusImage.src = state.userProfile.status_image_url;
-      myStatusImage.style.display = 'block';
-    } else {
-      myStatusImage.style.display = 'none';
-    }
-  }
+  // Hide the old below-card image since photo is now in avatar
+  if (myStatusImage) myStatusImage.style.display = 'none';
+
   if (idDisplay) {
     idDisplay.textContent = state.userProfile.id;
     idDisplay.title = 'Click to copy your Pulse ID';
@@ -497,24 +514,28 @@ function renderFriendsFeed() {
     card.className = 'glass-card user-status-card';
     card.dataset.friendId = friend.friendId;
 
+    // Avatar: show status photo in the circle if available, otherwise emoji
+    const avatarInner = hasImage
+      ? `<img src="${escapeHtml(friend.statusImageUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
+      : `<span>${friend.statusEmoji || '😊'}</span>`;
+
     card.innerHTML = `
-      <div class="avatar-container" style="position:relative;flex-shrink:0;">
-        <span>${friend.statusEmoji || '😊'}</span>
+      <div class="avatar-container${hasImage ? ' has-photo' : ''}" style="position:relative;flex-shrink:0;">
+        ${avatarInner}
         ${online ? '<span class="online-pulse-dot"></span>' : '<span class="offline-dot"></span>'}
         ${hasUnread ? `<span class="unread-badge">${friend.unreadCount}</span>` : ''}
       </div>
       <div class="status-details" style="flex:1;min-width:0;overflow:hidden;">
         <div class="status-user-name" style="flex-wrap:wrap;row-gap:4px;">
-          <span class="friend-display-name" style="font-size:15px;font-weight:700;">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
+          <span class="friend-display-name" style="font-size:14px;font-weight:700;">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
           ${friend.nickname ? `<span class="real-name-tag">${escapeHtml(friend.name)}</span>` : ''}
         </div>
         <div class="status-bubble">"${escapeHtml(friend.statusText || 'Available')}"</div>
-        ${hasImage ? `<img src="${escapeHtml(friend.statusImageUrl)}" class="friend-status-image" alt="Status image" loading="lazy" onclick="event.stopPropagation()">` : ''}
         <div class="status-time">${formatTimeAgo(friend.updatedAt)}</div>
       </div>
-      <div style="display:flex;flex-direction:row;gap:6px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
-        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:6px 10px;font-size:14px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
-        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" style="padding:6px 10px;font-size:14px;line-height:1;">✕</button>
+      <div style="display:flex;flex-direction:row;gap:4px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
+        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
+        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" style="padding:5px 8px;font-size:13px;line-height:1;">✕</button>
       </div>
     `;
     container.appendChild(card);
@@ -784,11 +805,11 @@ function removeChatImage() {
   if (camInput) camInput.value = '';
 }
 
-async function handleChatImage(file) {
+async function handleChatImage(file, fromFrontCamera = false) {
   if (!file) return;
   try {
-    showToast('Compressing...');
-    const compressed = await compressImage(file);
+    showToast('Processing...');
+    const compressed = await compressImage(file, 1200, 0.8, fromFrontCamera);
     currentChatImage = compressed;
     const preview = document.getElementById('chat-image-preview');
     const img = document.getElementById('chat-preview-img');
@@ -802,11 +823,11 @@ async function handleChatImage(file) {
 /* ==========================================
    STATUS IMAGE HANDLERS
    ========================================== */
-async function handleStatusImage(file) {
+async function handleStatusImage(file, fromFrontCamera = false) {
   if (!file) return;
   try {
-    showToast('Compressing image...');
-    const compressed = await compressImage(file);
+    showToast('Processing image...');
+    const compressed = await compressImage(file, 1200, 0.8, fromFrontCamera);
     currentStatusImage = compressed;
     isStatusImageRemoved = false;
     const preview = document.getElementById('status-image-preview');
@@ -1355,11 +1376,14 @@ function initEventListeners() {
   });
 
   document.getElementById('status-file-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
+    if (e.target.files?.[0]) handleStatusImage(e.target.files[0], false);
   });
 
   document.getElementById('status-camera-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
+    if (!e.target.files?.[0]) return;
+    // If user chose front camera toggle, mirror-correct the selfie
+    const isFront = document.getElementById('status-camera-face-toggle')?.dataset.face === 'user';
+    handleStatusImage(e.target.files[0], isFront);
   });
 
   document.getElementById('status-remove-image')?.addEventListener('click', () => {
@@ -1367,8 +1391,18 @@ function initEventListeners() {
   });
 
   document.getElementById('status-camera-btn')?.addEventListener('click', () => {
-    // Camera button opens camera directly
     document.getElementById('status-camera-input')?.click();
+  });
+
+  // Front/back camera toggle for status
+  document.getElementById('status-camera-face-toggle')?.addEventListener('click', () => {
+    const toggle = document.getElementById('status-camera-face-toggle');
+    const input = document.getElementById('status-camera-input');
+    if (!toggle || !input) return;
+    const isFront = toggle.dataset.face === 'environment';
+    toggle.dataset.face = isFront ? 'user' : 'environment';
+    toggle.textContent = isFront ? '🔄 Front' : '🔄 Back';
+    input.setAttribute('capture', isFront ? 'user' : 'environment');
   });
 
   document.getElementById('status-file-btn')?.addEventListener('click', () => {
@@ -1455,11 +1489,13 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-file-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
+    if (e.target.files?.[0]) handleChatImage(e.target.files[0], false);
   });
 
   document.getElementById('chat-camera-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
+    if (!e.target.files?.[0]) return;
+    const isFront = document.getElementById('chat-camera-face-toggle')?.dataset.face === 'user';
+    handleChatImage(e.target.files[0], isFront);
   });
 
   document.getElementById('chat-remove-image')?.addEventListener('click', () => {
@@ -1467,8 +1503,18 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
-    // Camera button opens camera directly
     document.getElementById('chat-camera-input')?.click();
+  });
+
+  // Front/back toggle for chat camera
+  document.getElementById('chat-camera-face-toggle')?.addEventListener('click', () => {
+    const toggle = document.getElementById('chat-camera-face-toggle');
+    const input = document.getElementById('chat-camera-input');
+    if (!toggle || !input) return;
+    const isFront = toggle.dataset.face === 'environment';
+    toggle.dataset.face = isFront ? 'user' : 'environment';
+    toggle.textContent = isFront ? '🔄' : '🔄';
+    input.setAttribute('capture', isFront ? 'user' : 'environment');
   });
 
   document.getElementById('chat-file-btn')?.addEventListener('click', () => {

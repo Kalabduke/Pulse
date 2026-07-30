@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Pulse - Real-time Status Updates</title>
   
   <meta name="description" content="Real-time emotional & health status updates on your lock screen & notifications with close friends.">
@@ -171,37 +171,36 @@
 
       <div class="dashboard-grid">
         <!-- Own Status Card -->
-        <div class="glass-card" style="border-left: 4px solid hsl(var(--primary)); background: rgba(99, 102, 241, 0.04);">
-          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-            <div style="display: flex; align-items: center; gap: 16px;">
-              <div class="avatar-container" style="background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3);">
+        <div class="glass-card" style="border-left: 3px solid hsl(var(--primary)); background: rgba(99, 102, 241, 0.04);">
+          <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 12px; min-width:0; flex:1;">
+              <div class="avatar-container" id="my-avatar-container" style="background: rgba(99, 102, 241, 0.1); border-color: rgba(99, 102, 241, 0.3);">
                 <span id="my-avatar">👋</span>
                 <span id="my-pulse-dot" class="online-pulse-dot"></span>
               </div>
-              <div class="status-details">
+              <div class="status-details" style="min-width:0;">
                 <div class="status-user-name">
-                  <span id="my-name">My Status</span>
+                  <span id="my-name" style="font-size:14px;">My Status</span>
                   <span class="tag">You</span>
                 </div>
                 <div id="my-status-bubble" class="status-bubble">"Just set up my Pulse status!"</div>
-                <img id="my-status-image" class="friend-status-image" style="display:none; margin-top:8px;" alt="My status">
+                <img id="my-status-image" style="display:none;" alt="">
               </div>
             </div>
-            <button id="btn-open-status-modal" class="btn btn-secondary btn-small" style="background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); font-weight: 700; color: #a5b4fc;">
+            <button id="btn-open-status-modal" class="btn btn-secondary btn-small" style="background: rgba(99, 102, 241, 0.15); border-color: rgba(99, 102, 241, 0.3); font-weight: 700; color: #a5b4fc; flex-shrink:0;">
               Update
             </button>
           </div>
-          
-          <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-            <span style="font-size: 11px; color: hsl(var(--text-muted)); word-break: break-all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-              My Pulse ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: #a5b4fc;">Loading...</strong>
+          <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span style="font-size: 11px; color: hsl(var(--text-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex:1;">
+              ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: #a5b4fc;">Loading...</strong>
             </span>
-            <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 8px; font-size: 10px;">Copy</button>
+            <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px; flex-shrink:0;">Copy</button>
           </div>
         </div>
 
         <!-- Friends Feed -->
-        <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
+        <div style="display: flex; flex-direction: column; gap: 10px;">
           <h2 class="section-title">
             <span>Friends Updates</span>
             <span id="connected-count" class="section-count">0/5</span>
@@ -270,6 +269,7 @@
         <div class="chat-input-row">
           <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200">
           <button id="chat-camera-btn" class="chat-media-btn" title="Camera">📷</button>
+          <button id="chat-camera-face-toggle" class="chat-media-btn" data-face="environment" title="Switch front/back">🔄</button>
           <button id="chat-file-btn" class="chat-media-btn" title="Photo">🖼️</button>
           <button id="chat-send-btn" class="chat-send-btn">➤</button>
         </div>
@@ -328,11 +328,14 @@
             <button type="button" id="status-camera-btn" class="btn btn-secondary btn-small" style="font-size:13px; padding:10px 14px;">
               📷 Camera
             </button>
+            <button type="button" id="status-camera-face-toggle" class="btn btn-secondary btn-small" data-face="environment" style="font-size:13px; padding:10px 14px;" title="Switch front/back camera">
+              🔄 Back
+            </button>
             <button type="button" id="status-file-btn" class="btn btn-secondary btn-small" style="font-size:13px; padding:10px 14px;">
               🖼️ Gallery
             </button>
           </div>
-          <!-- camera input: capture forces camera app -->
+          <!-- camera input: capture attribute toggled by JS -->
           <input type="file" id="status-camera-input" accept="image/*" capture="environment" style="display:none;">
           <!-- gallery input: no capture, opens file picker / gallery -->
           <input type="file" id="status-file-input" accept="image/*" style="display:none;">
