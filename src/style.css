@@ -1427,8 +1427,36 @@ body {
 }
 
 /* ==========================================
-   DIRECT STATUS BADGE
+   PRIVATE SENT PREVIEW (shown on sender's friend card)
    ========================================== */
+.private-sent-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 10px;
+  font-size: 11px;
+  color: hsl(var(--text-muted));
+  flex-wrap: wrap;
+}
+
+.private-sent-preview span:first-child {
+  color: #c4b5fd;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.private-sent-preview img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  cursor: zoom-in;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
 .direct-status-badge {
   display: inline-flex;
   align-items: center;

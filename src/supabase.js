@@ -265,7 +265,7 @@ export async function fetchFriendsStatusHistory(connectedFriendIds) {
     `)
     .in('user_id', connectedFriendIds)
     .order('created_at', { ascending: false })
-    .limit(5);
+    .limit(15);
 
   if (error) throw error;
   return data || [];
@@ -492,7 +492,7 @@ export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null
       from_user_id: user.id,
       to_user_id: toUserId,
       status_emoji: emoji,
-      status_text: text,
+      status_text: text || '',
       status_image_url: imageUrl,
       updated_at: new Date().toISOString()
     }, { onConflict: 'from_user_id,to_user_id' })
@@ -501,18 +501,18 @@ export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null
 
   if (error) throw error;
 
-  // Also log to status_history so it appears in recipient's history feed
-  client()
+  // Log to status_history — awaited so we know it worked
+  // The recipient can read this via RLS because they are a connected friend
+  const { error: histErr } = await client()
     .from('status_history')
     .insert({
       user_id: user.id,
       status_emoji: emoji,
-      status_text: text,
+      status_text: text || '',
       status_image_url: imageUrl
-    })
-    .then(({ error: histErr }) => {
-      if (histErr) console.warn('[Pulse] Private status history log failed:', histErr.message);
     });
+
+  if (histErr) console.warn('[Pulse] Private status history log failed:', histErr.message);
 
   return data;
 }
@@ -520,15 +520,23 @@ export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null
 // Fetch all private statuses sent TO the current user (from any friend)
 export async function fetchPrivateStatusesForMe() {
   const { data: { user } } = await client().auth.getUser();
-  if (!user) return [];
+  if (!user) return { received: [], sent: [] };
 
-  const { data, error } = await client()
-    .from('private_statuses')
-    .select('from_user_id, status_emoji, status_text, status_image_url, updated_at')
-    .eq('to_user_id', user.id);
+  const [receivedRes, sentRes] = await Promise.all([
+    client()
+      .from('private_statuses')
+      .select('from_user_id, to_user_id, status_emoji, status_text, status_image_url, updated_at')
+      .eq('to_user_id', user.id),
+    client()
+      .from('private_statuses')
+      .select('from_user_id, to_user_id, status_emoji, status_text, status_image_url, updated_at')
+      .eq('from_user_id', user.id)
+  ]);
 
-  if (error) return [];
-  return data || [];
+  return {
+    received: receivedRes.data || [],
+    sent: sentRes.data || []
+  };
 }
 
 export async function sendDirectMessage(recipientId, text, imageUrl = null) {

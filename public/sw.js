@@ -85,49 +85,36 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ==========================================
-// CORE NOTIFICATION HELPER
-// Shows TWO notifications:
-//   1. Pop-up alert (unique tag per friend) — appears as heads-up banner
-//   2. Persistent summary (fixed tag) — stays in tray like a live widget
+// CORE NOTIFICATION — one notification per update, no doubles
+// Uses a fixed tag per friend so rapid updates replace instead of stacking
 // ==========================================
-function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
-  const popupTitle = `${emoji} ${friendName}`;
-  const popupBody  = `"${statusText}"`;
-  const summaryBody = `${emoji} ${friendName}: "${statusText}"`;
 
-  // 1. Pop-up heads-up notification (unique tag so it doesn't replace others)
-  const popupPromise = self.registration.showNotification(popupTitle, {
-    body: popupBody,
+// SW-level dedup: track last notification time per friend
+const _swNotifTimes = {};
+
+function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
+  const tag = `pulse-${friendName}`;
+  const now = Date.now();
+
+  // If same friend notified within 8 seconds, replace silently (no buzz)
+  const recentlySent = _swNotifTimes[tag] && (now - _swNotifTimes[tag] < 8000);
+  _swNotifTimes[tag] = now;
+
+  return self.registration.showNotification(`${emoji} ${friendName}`, {
+    body: `"${statusText}"`,
     icon: '/icon-192.png',
     badge: '/notification-icon.png',
-    tag: `pulse-popup-${friendName}-${Date.now()}`,
-    renotify: true,
+    tag,
+    renotify: !recentlySent,   // only buzz if not a duplicate within 8s
     requireInteraction: false,
-    silent: false,
-    vibrate: [200, 100, 200],
+    silent: recentlySent,
+    vibrate: recentlySent ? [] : [200, 100, 200],
     data: { url },
     actions: [
       { action: 'open',    title: '👀 View' },
       { action: 'dismiss', title: '✕' }
     ]
   });
-
-  // 2. Persistent summary notification (fixed tag — replaces itself, stays on lockscreen)
-  const persistentPromise = self.registration.showNotification('Pulse — Live Status', {
-    body: summaryBody,
-    icon: '/icon-192.png',
-    badge: '/notification-icon.png',
-    tag: 'pulse-live-widget',
-    renotify: false,       // silent update — no second buzz
-    requireInteraction: false,
-    silent: true,          // no sound for the persistent one
-    data: { url },
-    actions: [
-      { action: 'open', title: '👀 Open Pulse' }
-    ]
-  });
-
-  return Promise.all([popupPromise, persistentPromise]);
 }
 
 // ==========================================

@@ -55,7 +55,8 @@ const state = {
   authMode: 'signin',
   clockInterval: null,
   pollInterval: null,
-  privateStatuses: {}   // keyed by from_user_id → { status_emoji, status_text, status_image_url }
+  privateStatuses: {},    // received: keyed by from_user_id
+  privateSentByMe: {}     // sent: keyed by to_user_id
 };
 
 let currentStatusImage = null;
@@ -285,6 +286,13 @@ function setupRealtimeSync() {
           const emoji = change.record.status_emoji || '💫';
           const text = change.record.status_text || 'Updated their status';
 
+          // Dedup: only notify + reload once per friend per 5 seconds
+          const dedupKey = `rt-${updatedId}`;
+          const now = Date.now();
+          if (!state._rtDedup) state._rtDedup = {};
+          if (state._rtDedup[dedupKey] && now - state._rtDedup[dedupKey] < 5000) return;
+          state._rtDedup[dedupKey] = now;
+
           notifyFriendStatusUpdate(displayName, emoji, text);
           showToast(`${emoji} ${displayName} updated their status!`);
           await loadDashboardData();
@@ -335,11 +343,19 @@ async function loadDashboardData() {
       updateSimulatorUI();
     }
 
-    // Build a lookup: from_user_id → private status
+    // Build two lookups:
+    // privateStatuses[friendId] = what THEY sent to ME (shown on their card)
+    // privateSentByMe[friendId] = what I sent TO THEM (shown as sent preview on their card)
     state.privateStatuses = {};
-    (privateStatuses || []).forEach(ps => {
-      state.privateStatuses[ps.from_user_id] = ps;
-    });
+    state.privateSentByMe = {};
+    if (privateStatuses) {
+      (privateStatuses.received || []).forEach(ps => {
+        state.privateStatuses[ps.from_user_id] = ps;
+      });
+      (privateStatuses.sent || []).forEach(ps => {
+        state.privateSentByMe[ps.to_user_id] = ps;
+      });
+    }
 
     if (!cachedConns) setCachedConnections(connections);
     state.connections = connections;
@@ -364,9 +380,13 @@ async function loadDashboardData() {
       .map(c => c.friendId);
 
     if (connectedFriendIds.length > 0) {
-      fetchFriendsStatusHistory(connectedFriendIds)
-        .then(history => renderStatusHistory(history, connections))
-        .catch(() => {});
+      try {
+        const history = await fetchFriendsStatusHistory(connectedFriendIds);
+        renderStatusHistory(history, connections);
+      } catch (err) {
+        console.warn('[Pulse] History fetch failed:', err.message);
+        renderStatusHistory([], connections);
+      }
     } else {
       renderStatusHistory([], connections);
     }
@@ -529,8 +549,9 @@ function renderFriendsFeed() {
   container.innerHTML = '';
 
   connected.forEach(friend => {
-    // Private status overrides public — only this user can see their private status
+    // Check if this friend sent us a private status — override public status if so
     const ps = state.privateStatuses[friend.friendId];
+    const sentByMe = state.privateSentByMe[friend.friendId];
     const displayEmoji = ps?.status_emoji  ?? friend.statusEmoji;
     const displayText  = ps?.status_text   ?? friend.statusText;
     const displayImage = ps?.status_image_url ?? friend.statusImageUrl;
@@ -546,6 +567,15 @@ function renderFriendsFeed() {
 
     const privateBadge = ps
       ? `<span class="direct-status-badge">🔒 Private</span>`
+      : '';
+
+    // Show what YOU sent them privately as a subtle sub-row
+    const sentPreview = sentByMe
+      ? `<div class="private-sent-preview">
+           <span>📤 You sent privately:</span>
+           <span>${escapeHtml(sentByMe.status_emoji)} ${escapeHtml(sentByMe.status_text || '')}</span>
+           ${sentByMe.status_image_url ? `<img src="${escapeHtml(sentByMe.status_image_url)}" onclick="event.stopPropagation();openFullImage('${escapeHtml(sentByMe.status_image_url)}')" alt="">` : ''}
+         </div>`
       : '';
 
     const avatarInner = hasImage
@@ -566,6 +596,7 @@ function renderFriendsFeed() {
         ${privateBadge}
         <div class="status-bubble">"${escapeHtml(displayText || 'Available')}"</div>
         <div class="status-time">${formatTimeAgo(displayTime)}</div>
+        ${sentPreview}
       </div>
       <div style="display:flex;flex-direction:row;gap:4px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
         <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
@@ -726,7 +757,8 @@ function renderStatusHistory(history, connections = []) {
     return;
   }
 
-  // Show only most recent 5
+  // Show up to 5 most recent entries across all friends
+  // We fetch 15 from DB so private statuses from one friend don't get pushed out
   const recent = history.slice(0, 5);
 
   container.innerHTML = `<div class="history-list">${recent.map(entry => {
@@ -736,12 +768,12 @@ function renderStatusHistory(history, connections = []) {
     const hasImage = entry.status_image_url;
 
     return `
-      <div class="history-item">
+      <div class="history-item" ${hasImage ? `onclick="openFullImage('${escapeHtml(entry.status_image_url)}')" style="cursor:pointer;"` : ''}>
         <div class="history-emoji">${escapeHtml(entry.status_emoji)}</div>
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
           <span class="history-text">"${escapeHtml(entry.status_text || '')}"</span>
-          ${hasImage ? `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy">` : ''}
+          ${hasImage ? `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy" onclick="event.stopPropagation();openFullImage('${escapeHtml(entry.status_image_url)}')">` : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
@@ -1242,9 +1274,24 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
 }
 
-function showPersistentStatusNotification(friendName, emoji, statusText) {
+/* ==========================================
+   NOTIFICATIONS — single source via SW only
+   ========================================== */
+
+// Dedup: track last notification time per friend to avoid repeated alerts
+const _notifDedup = {};
+
+function notifyFriendStatusUpdate(friendName, emoji, statusText) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
+  const key = friendName;
+  const now = Date.now();
+  // Suppress if we already notified for this friend within 10 seconds
+  if (_notifDedup[key] && now - _notifDedup[key] < 10000) return;
+  _notifDedup[key] = now;
+
+  // Delegate entirely to the service worker — it handles both popup + persistent
+  // Do NOT call new Notification() here; that would double-fire
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       type: 'FRIEND_STATUS_UPDATE',
@@ -1254,24 +1301,6 @@ function showPersistentStatusNotification(friendName, emoji, statusText) {
       url: '/'
     });
   }
-
-  try {
-    new Notification(`${emoji} ${friendName}`, {
-      body: `"${statusText}"`,
-      icon: '/icon-192.png',
-      badge: '/notification-icon.png',
-      tag: `pulse-popup-${friendName}`,
-      renotify: true,
-      silent: false
-    });
-  } catch (e) {
-    console.warn('[Pulse] Direct notification failed:', e.message);
-  }
-}
-
-function notifyFriendStatusUpdate(friendName, emoji, statusText) {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-  showPersistentStatusNotification(friendName, emoji, statusText);
 }
 
 /* ==========================================
@@ -1502,6 +1531,7 @@ function initEventListeners() {
         await upsertPrivateStatus(directFriendId, state.selectedEmoji, text, imageUrl);
         showToast('Status sent privately! 🔒');
         document.getElementById('status-modal').style.display = 'none';
+        if (textInput) textInput.value = '';
         invalidateCache();
         await loadDashboardData();
       } else {
