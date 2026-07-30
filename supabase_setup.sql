@@ -329,3 +329,41 @@ begin
   exception when others then end;
 end;
 $;
+
+-- ====================================================================
+-- MIGRATION: Private nicknames + name snapshots
+-- Run this in Supabase SQL Editor if you already have the app running.
+-- ====================================================================
+
+-- 1. Add viewer_nickname: each side stores their OWN private label
+--    user_id side sets viewer_nickname = their label for friend_id
+--    friend_id side has no nickname on this row — they have their own row
+--    This replaces the shared `nickname` column which leaked to both sides.
+alter table public.connections
+  add column if not exists viewer_nickname text default null;
+
+-- 2. Add friend_name_snapshot: captures the friend's display name
+--    at the moment the connection was accepted.
+--    Existing friends keep seeing the name they connected with.
+--    New connections snapshot the name at acceptance time.
+alter table public.connections
+  add column if not exists friend_name_snapshot text default null;
+
+-- 3. Backfill friend_name_snapshot for existing connections
+--    using current profile names (best we can do for existing data)
+update public.connections c
+set friend_name_snapshot = p.name
+from public.profiles p
+where c.friend_name_snapshot is null
+  and c.status = 'connected'
+  and p.id = c.friend_id;
+
+-- Also backfill from the sender's perspective (the receiver's name)
+-- This covers the case where user_id is the one who accepted
+update public.connections c
+set friend_name_snapshot = p.name
+from public.profiles p
+where c.friend_name_snapshot is null
+  and p.id = c.user_id;
+
+-- ====================================================================

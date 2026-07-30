@@ -285,6 +285,8 @@ export async function fetchConnections() {
       id,
       status,
       nickname,
+      viewer_nickname,
+      friend_name_snapshot,
       created_at,
       user_id,
       friend_id,
@@ -299,7 +301,7 @@ export async function fetchConnections() {
     // Fallback without explicit constraint names
     const res2 = await client()
       .from('connections')
-      .select('id, status, nickname, created_at, user_id, friend_id')
+      .select('id, status, nickname, viewer_nickname, friend_name_snapshot, created_at, user_id, friend_id')
       .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
     if (res2.error) throw res2.error;
@@ -355,16 +357,23 @@ export async function fetchConnections() {
     const isSender = conn.sender?.id === user.id || conn.user_id === user.id;
     const friend = isSender ? conn.receiver : conn.sender;
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
-    const nickname = conn.nickname || null;
+
+    // viewer_nickname: the private label YOU set for this friend — only visible to you
+    // Falls back to old nickname column for backwards compat with existing data
+    const myNickname = conn.viewer_nickname || null;
+
+    // friend_name_snapshot: their name at connection time — frozen, won't change
+    // Falls back to live profile name if snapshot not yet set (old connections)
+    const friendName = conn.friend_name_snapshot || friend?.name || 'Unknown';
 
     return {
       connectionId: conn.id,
       status: conn.status,
       isOutgoing: isSender,
-      nickname,
+      nickname: myNickname,
       friendId,
-      name: friend?.name || 'Unknown',
-      displayName: nickname?.trim() || friend?.name || 'Unknown',
+      name: friendName,
+      displayName: myNickname?.trim() || friendName,
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
       statusImageUrl: friend?.status_image_url || null,
@@ -424,7 +433,12 @@ export async function sendConnectionRequest(friendIdOrName) {
 
   const { data, error } = await client()
     .from('connections')
-    .insert({ user_id: user.id, friend_id: friendProfile.id, status: 'pending' })
+    .insert({
+      user_id: user.id,
+      friend_id: friendProfile.id,
+      status: 'pending',
+      friend_name_snapshot: friendProfile.name   // snapshot at invite time
+    })
     .select()
     .single();
 
@@ -436,26 +450,98 @@ export async function setConnectionNickname(connectionId, nickname) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  // RLS allows both user_id and friend_id to update the row
-  // We only update the nickname field — this is safe for both sender and receiver
-  const { data, error } = await client()
+  // Get the row to check which side we are
+  const { data: row, error: rowErr } = await client()
     .from('connections')
-    .update({ nickname: nickname?.trim() || null })
+    .select('id, user_id, friend_id')
     .eq('id', connectionId)
-    .select()
     .single();
 
-  if (error) throw error;
-  return data;
+  if (rowErr) throw rowErr;
+
+  const trimmed = nickname?.trim() || null;
+
+  if (row.user_id === user.id) {
+    // We are the sender on this row — write to viewer_nickname (our private label)
+    const { data, error } = await client()
+      .from('connections')
+      .update({ viewer_nickname: trimmed })
+      .eq('id', connectionId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  } else {
+    // We are the receiver — find our own row (where user_id = us, friend_id = them)
+    // If it doesn't exist we can't store a nickname without a row owned by us
+    const { data: ourRow, error: ourErr } = await client()
+      .from('connections')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('friend_id', row.user_id)
+      .maybeSingle();
+
+    if (ourErr) throw ourErr;
+
+    if (ourRow) {
+      const { data, error } = await client()
+        .from('connections')
+        .update({ viewer_nickname: trimmed })
+        .eq('id', ourRow.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } else {
+      // No row owned by us — fall back to updating the shared nickname column
+      // This only happens if the friendship was one-directional with no reverse row
+      const { data, error } = await client()
+        .from('connections')
+        .update({ nickname: trimmed })
+        .eq('id', connectionId)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    }
+  }
 }
 
 export async function acceptInvitation(connectionId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  // First get the connection to find out who the sender is
+  const { data: conn, error: connErr } = await client()
+    .from('connections')
+    .select('user_id, friend_id')
+    .eq('id', connectionId)
+    .single();
+
+  if (connErr) throw connErr;
+
+  // Snapshot the name of the person we are accepting (the sender)
+  // We (the receiver) store their name so it stays frozen for us
+  let senderName = null;
+  if (conn) {
+    const { data: senderProfile } = await client()
+      .from('profiles')
+      .select('name')
+      .eq('id', conn.user_id)
+      .single();
+    senderName = senderProfile?.name || null;
+  }
+
   const { data, error } = await client()
     .from('connections')
-    .update({ status: 'connected' })
+    .update({
+      status: 'connected',
+      friend_name_snapshot: senderName
+    })
     .eq('id', connectionId)
     .select()
     .single();
+
   if (error) throw error;
   return data;
 }
