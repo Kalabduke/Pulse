@@ -43,7 +43,7 @@ export function resetSupabaseConfig() {
   supabase = null;
 }
 
-function client() {
+export function client() {
   if (!supabase && !initSupabase()) {
     throw new Error('Supabase is not configured.');
   }
