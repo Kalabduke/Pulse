@@ -181,16 +181,27 @@ export async function uploadStatusImage(file) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  const fileExt = file.name.split('.').pop();
+  const fileExt = file.name.split('.').pop().toLowerCase();
   const fileName = `${user.id}/${Date.now()}.${fileExt}`;
   const filePath = `statuses/${fileName}`;
+
+  // Always set explicit content type so browser plays video correctly
+  const contentType = file.type || (
+    fileExt === 'mp4'  ? 'video/mp4'  :
+    fileExt === 'webm' ? 'video/webm' :
+    fileExt === 'mov'  ? 'video/quicktime' :
+    fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
+    fileExt === 'png'  ? 'image/png'  :
+    'application/octet-stream'
+  );
 
   const { error: uploadError } = await client()
     .storage
     .from('pulse-images')
     .upload(filePath, file, {
       cacheControl: '3600',
-      upsert: false
+      upsert: false,
+      contentType
     });
 
   if (uploadError) throw uploadError;

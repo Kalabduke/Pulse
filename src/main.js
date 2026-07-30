@@ -468,14 +468,18 @@ function updateMyStatusUI() {
   // Show photo in avatar circle if available, else emoji
   if (myAvatarContainer) {
     if (state.userProfile.status_image_url) {
-      myAvatarContainer.classList.add('has-photo');
-      myAvatarContainer.style.cursor = 'zoom-in';
       const url = state.userProfile.status_image_url;
       const mtype = state.userProfile.status_media_type || 'image';
-      myAvatarContainer.onclick = isVideoUrl(url, mtype) ? null : () => openFullImage(url);
+      const isVid = isVideoUrl(url, mtype);
+      myAvatarContainer.classList.add('has-photo');
+      myAvatarContainer.style.cursor = 'zoom-in';
+      myAvatarContainer.onclick = () => openFullMedia(url, isVid);
       if (myAvatar) {
-        myAvatar.innerHTML = isVideoUrl(url, mtype)
-          ? `<video src="${escapeHtml(url)}" autoplay loop muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;"></video>`
+        myAvatar.innerHTML = isVid
+          ? `<video autoplay loop muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">
+               <source src="${escapeHtml(url)}" type="video/mp4">
+               <source src="${escapeHtml(url)}" type="video/webm">
+             </video>`
           : `<img src="${escapeHtml(url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`;
       }
     } else {
@@ -638,11 +642,23 @@ function renderFriendsFeed() {
       : '';
 
     const isVideo = hasImage && isVideoUrl(displayImage, ps?.status_media_type || friend.statusMediaType);
+
+    // IMAGE or VIDEO: both go in the avatar circle
+    // Photos: object-fit cover fills circle nicely
+    // Videos: loop silently in the circle, tap opens full player
     const avatarInner = hasImage
       ? isVideo
-        ? `<video src="${escapeHtml(displayImage)}" autoplay loop muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;"></video>`
-        : `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
+        ? `<video autoplay loop muted playsinline
+             style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;cursor:pointer;">
+             <source src="${escapeHtml(displayImage)}" type="video/mp4">
+             <source src="${escapeHtml(displayImage)}" type="video/webm">
+           </video>`
+        : `<img src="${escapeHtml(displayImage)}" alt=""
+             style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;cursor:zoom-in;">`
       : `<span>${escapeHtml(displayEmoji || '😊')}</span>`;
+
+    // No separate video card below — everything in the circle
+    const videoCard = '';
 
     card.innerHTML = `
       <div class="avatar-container${hasImage ? ' has-photo' : ''}" style="position:relative;flex-shrink:0;">
@@ -657,6 +673,7 @@ function renderFriendsFeed() {
         </div>
         ${privateBadge}
         <div class="status-bubble">"${escapeHtml(displayText || 'Available')}"</div>
+        ${videoCard}
         <div class="status-time">${formatTimeAgo(displayTime)}</div>
         ${sentPreview}
       </div>
@@ -671,11 +688,19 @@ function renderFriendsFeed() {
   container.querySelectorAll('.user-status-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('.btn')) return;
-      // If clicking the avatar that has a photo, open the image viewer
       const avatarEl = e.target.closest('.avatar-container.has-photo');
       if (avatarEl) {
+        const vid = avatarEl.querySelector('video');
         const img = avatarEl.querySelector('img');
-        if (img) { openFullImage(img.src); return; }
+        if (vid) {
+          const src = vid.querySelector('source')?.src || vid.src;
+          openFullMedia(src, true);
+          return;
+        }
+        if (img) {
+          openFullImage(img.src);
+          return;
+        }
       }
       const friendId = card.dataset.friendId;
       const friend = state.connections.find(c => c.friendId === friendId);
@@ -837,10 +862,16 @@ function renderStatusHistory(history, connections = []) {
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
           <span class="history-text">"${escapeHtml(entry.status_text || '')}"</span>
-          ${hasImage ? mediaTag(entry.status_image_url, entry.status_media_type, {
-            style: 'margin-top:6px;max-height:150px;object-fit:cover;border:1px solid var(--border-glow);',
-            onclick: !isVideoUrl(entry.status_image_url, entry.status_media_type) ? `openFullImage('${escapeHtml(entry.status_image_url)}')` : ''
-          }) : ''}
+          ${hasImage ? (isVideoUrl(entry.status_image_url, entry.status_media_type)
+            ? `<video controls playsinline muted preload="metadata"
+                style="width:100%;border-radius:10px;display:block;margin-top:6px;background:#000;"
+                onclick="event.stopPropagation();openFullMedia('${escapeHtml(entry.status_image_url)}',true)">
+                 <source src="${escapeHtml(entry.status_image_url)}" type="video/mp4">
+                 <source src="${escapeHtml(entry.status_image_url)}" type="video/webm">
+               </video>`
+            : `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy"
+                style="cursor:zoom-in;" onclick="event.stopPropagation();openFullImage('${escapeHtml(entry.status_image_url)}')">`)
+          : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
@@ -1282,9 +1313,17 @@ function mediaTag(url, mediaType, opts = {}) {
   const safe = escapeHtml(url);
   if (isVideoUrl(url, mediaType)) {
     const { autoplay = false, loop = false, controls = true, style = '' } = opts;
-    return `<video src="${safe}" ${controls ? 'controls' : ''} ${autoplay ? 'autoplay' : ''} 
+    // Detect mime type from URL for the source type attribute
+    const lower = url.toLowerCase();
+    const mime = lower.includes('.webm') ? 'video/webm' :
+                 lower.includes('.mov')  ? 'video/mp4'  : 'video/mp4';
+    return `<video ${controls ? 'controls' : ''} ${autoplay ? 'autoplay' : ''}
       ${loop ? 'loop' : ''} muted playsinline preload="metadata"
-      style="width:100%;border-radius:12px;display:block;max-height:200px;${style}"></video>`;
+      style="width:100%;border-radius:12px;display:block;max-height:200px;${style}">
+      <source src="${safe}" type="${mime}">
+      <source src="${safe}" type="video/webm">
+      <source src="${safe}" type="video/mp4">
+    </video>`;
   }
   const { style = '', onclick = '' } = opts;
   return `<img src="${safe}" alt="" loading="lazy" style="width:100%;border-radius:12px;display:block;${style}" ${onclick ? `onclick="${onclick}"` : ''}>`;
@@ -1477,52 +1516,73 @@ function renderFriendLocations() {
   });
 }
 function openFullImage(url) {
+  openFullMedia(url, false);
+}
+
+function openFullMedia(url, isVideo = false) {
   if (!url) return;
-  // Remove any existing viewer
   document.getElementById('full-image-viewer')?.remove();
 
   const viewer = document.createElement('div');
   viewer.id = 'full-image-viewer';
   viewer.style.cssText = `
     position: fixed; inset: 0; z-index: 9999;
-    background: rgba(0,0,0,0.92);
+    background: rgba(0,0,0,0.95);
     display: flex; align-items: center; justify-content: center;
-    cursor: zoom-out; animation: fadeIn 0.2s ease;
+    cursor: ${isVideo ? 'default' : 'zoom-out'};
+    animation: fadeIn 0.2s ease;
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   `;
 
-  const img = document.createElement('img');
-  img.src = url;
-  img.style.cssText = `
-    max-width: 96vw; max-height: 90vh;
-    object-fit: contain; border-radius: 12px;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
-  `;
+  let media;
+  if (isVideo || isVideoUrl(url, null)) {
+    media = document.createElement('video');
+    media.controls = true;
+    media.autoplay = true;
+    media.playsInline = true;
+    media.style.cssText = `max-width:96vw;max-height:88vh;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.8);`;
+    const src1 = document.createElement('source');
+    src1.src = url;
+    src1.type = url.toLowerCase().includes('.webm') ? 'video/webm' : 'video/mp4';
+    const src2 = document.createElement('source');
+    src2.src = url;
+    src2.type = 'video/webm';
+    media.appendChild(src1);
+    media.appendChild(src2);
+  } else {
+    media = document.createElement('img');
+    media.src = url;
+    media.style.cssText = `max-width:96vw;max-height:90vh;object-fit:contain;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.8);`;
+  }
 
   const closeBtn = document.createElement('button');
   closeBtn.textContent = '✕';
   closeBtn.style.cssText = `
-    position: absolute; top: 20px; right: 20px;
-    background: rgba(255,255,255,0.15); border: none;
-    color: white; font-size: 20px; width: 40px; height: 40px;
-    border-radius: 50%; cursor: pointer; display: flex;
-    align-items: center; justify-content: center;
+    position:absolute;top:20px;right:20px;
+    background:rgba(255,255,255,0.15);border:none;
+    color:white;font-size:20px;width:40px;height:40px;
+    border-radius:50%;cursor:pointer;display:flex;
+    align-items:center;justify-content:center;
   `;
 
-  viewer.appendChild(img);
+  viewer.appendChild(media);
   viewer.appendChild(closeBtn);
   document.body.appendChild(viewer);
 
-  const close = () => viewer.remove();
-  viewer.addEventListener('click', close);
-  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+  const close = () => {
+    if (media.tagName === 'VIDEO') media.pause();
+    viewer.remove();
+  };
+
+  if (!isVideo) viewer.addEventListener('click', (e) => { if (e.target === viewer) close(); });
+  closeBtn.addEventListener('click', close);
   document.addEventListener('keydown', function onKey(e) {
     if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
   });
 }
 
-// Expose globally so inline onclick can call it
 window.openFullImage = openFullImage;
+window.openFullMedia = openFullMedia;
 
 /* ==========================================
    PWA — SERVICE WORKER & NOTIFICATIONS
