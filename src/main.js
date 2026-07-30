@@ -591,9 +591,13 @@ function updateMyStatusUI() {
     if (state.userProfile.status_image_url) {
       myAvatarContainer.classList.add('has-photo');
       myAvatarContainer.style.cursor = 'zoom-in';
-      myAvatarContainer.onclick = () => openFullImage(state.userProfile.status_image_url);
+      const url = state.userProfile.status_image_url;
+      const mtype = state.userProfile.status_media_type || 'image';
+      myAvatarContainer.onclick = isVideoUrl(url, mtype) ? null : () => openFullImage(url);
       if (myAvatar) {
-        myAvatar.innerHTML = `<img src="${escapeHtml(state.userProfile.status_image_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`;
+        myAvatar.innerHTML = isVideoUrl(url, mtype)
+          ? `<video src="${escapeHtml(url)}" autoplay loop muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;"></video>`
+          : `<img src="${escapeHtml(url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`;
       }
     } else {
       myAvatarContainer.classList.remove('has-photo');
@@ -754,10 +758,10 @@ function renderFriendsFeed() {
          </div>`
       : '';
 
-    const isVideo = displayImage && (displayImage.includes('.mp4') || displayImage.includes('.webm'));
+    const isVideo = hasImage && isVideoUrl(displayImage, ps?.status_media_type || friend.statusMediaType);
     const avatarInner = hasImage
       ? isVideo
-        ? `<video src="${escapeHtml(displayImage)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" autoplay loop muted playsinline></video>`
+        ? `<video src="${escapeHtml(displayImage)}" autoplay loop muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;"></video>`
         : `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
       : `<span>${escapeHtml(displayEmoji || '😊')}</span>`;
 
@@ -954,7 +958,10 @@ function renderStatusHistory(history, connections = []) {
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
           <span class="history-text">"${escapeHtml(entry.status_text || '')}"</span>
-          ${hasImage ? `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy" onclick="event.stopPropagation();openFullImage('${escapeHtml(entry.status_image_url)}')">` : ''}
+          ${hasImage ? mediaTag(entry.status_image_url, entry.status_media_type, {
+            style: 'margin-top:6px;max-height:150px;object-fit:cover;border:1px solid var(--border-glow);',
+            onclick: !isVideoUrl(entry.status_image_url, entry.status_media_type) ? `openFullImage('${escapeHtml(entry.status_image_url)}')` : ''
+          }) : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
@@ -1339,6 +1346,29 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function isVideoUrl(url, mediaType) {
+  if (!url) return false;
+  if (mediaType === 'video') return true;
+  // Check URL for video extensions (Supabase URLs contain the original filename)
+  const lower = url.toLowerCase().split('?')[0]; // strip query params
+  return lower.endsWith('.mp4') || lower.endsWith('.webm') ||
+         lower.endsWith('.mov') || lower.endsWith('.ogg') ||
+         lower.includes('.mp4') || lower.includes('.webm');
+}
+
+function mediaTag(url, mediaType, opts = {}) {
+  if (!url) return '';
+  const safe = escapeHtml(url);
+  if (isVideoUrl(url, mediaType)) {
+    const { autoplay = false, loop = false, controls = true, style = '' } = opts;
+    return `<video src="${safe}" ${controls ? 'controls' : ''} ${autoplay ? 'autoplay' : ''} 
+      ${loop ? 'loop' : ''} muted playsinline preload="metadata"
+      style="width:100%;border-radius:12px;display:block;max-height:200px;${style}"></video>`;
+  }
+  const { style = '', onclick = '' } = opts;
+  return `<img src="${safe}" alt="" loading="lazy" style="width:100%;border-radius:12px;display:block;${style}" ${onclick ? `onclick="${onclick}"` : ''}>`;
 }
 
 /* ==========================================
@@ -2020,7 +2050,8 @@ function initEventListeners() {
         await loadDashboardData();
       } else {
         // All friends: update public profile
-        await updateStatus(name, state.selectedEmoji, text, imageUrl);
+        const mediaType = currentStatusImage?.type?.startsWith('video/') ? 'video' : 'image';
+        await updateStatus(name, state.selectedEmoji, text, imageUrl, mediaType);
         showToast('Status updated! 💫');
         if (textInput) textInput.value = '';
         document.getElementById('status-modal').style.display = 'none';

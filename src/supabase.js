@@ -207,11 +207,10 @@ export async function uploadStatusImage(file) {
    STATUS & PROFILES
    ========================================== */
 
-export async function updateStatus(name, emoji, text, imageUrl = null) {
+export async function updateStatus(name, emoji, text, imageUrl = null, mediaType = 'image') {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  // Server-side validation
   if (!name || typeof name !== 'string') throw new Error('Display name is required.');
   if (name.length > 50) throw new Error('Display name must be 50 characters or less.');
   if (text && text.length > 60) throw new Error('Status text must be 60 characters or less.');
@@ -225,6 +224,7 @@ export async function updateStatus(name, emoji, text, imageUrl = null) {
       status_emoji: emoji,
       status_text: text,
       status_image_url: imageUrl,
+      status_media_type: mediaType,
       updated_at: new Date().toISOString()
     }, { onConflict: 'id' })
     .select()
@@ -238,7 +238,8 @@ export async function updateStatus(name, emoji, text, imageUrl = null) {
       user_id: user.id,
       status_emoji: emoji,
       status_text: text,
-      status_image_url: imageUrl
+      status_image_url: imageUrl,
+      status_media_type: mediaType
     })
     .then(({ error: histErr }) => {
       if (histErr) console.warn('[Pulse] History log failed:', histErr.message);
@@ -374,6 +375,7 @@ export async function fetchConnections() {
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
       statusImageUrl: friend?.status_image_url || null,
+      statusMediaType: friend?.status_media_type || 'image',
       updatedAt: friend?.updated_at,
       lastSeen: friend?.last_seen,
       unreadCount: unreadCounts[friendId] || 0
