@@ -558,6 +558,16 @@ export async function removeConnection(connectionId) {
    PRIVATE STATUSES (per-friend status overrides)
    ========================================== */
 
+export async function clearOutgoingPrivateStatuses() {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return;
+
+  await client()
+    .from('private_statuses')
+    .delete()
+    .eq('from_user_id', user.id);
+}
+
 export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');

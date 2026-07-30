@@ -27,6 +27,7 @@ import {
   updateLastSeen,
   upsertPrivateStatus,
   fetchPrivateStatusesForMe,
+  clearOutgoingPrivateStatuses,
   client
 } from './supabase.js';
 
@@ -1588,6 +1589,10 @@ function initEventListeners() {
         showToast('Status updated! 💫');
         if (textInput) textInput.value = '';
         document.getElementById('status-modal').style.display = 'none';
+        // Delete all outgoing private statuses — everyone now sees the public update
+        state.privateSentByMe = {};
+        state.privateStatuses = {};
+        await clearOutgoingPrivateStatuses();
         await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
         await loadDashboardData();
       }
