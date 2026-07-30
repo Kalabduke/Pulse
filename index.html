@@ -262,11 +262,24 @@
       </div>
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-area">
+        <!-- Chat emoji picker popup -->
+        <div id="chat-emoji-picker" class="chat-emoji-picker" style="display:none;">
+          <div class="chat-emoji-picker-tabs" id="chat-emoji-tabs">
+            <button class="chat-emoji-tab active" data-cat="mood">😊</button>
+            <button class="chat-emoji-tab" data-cat="health">❤️</button>
+            <button class="chat-emoji-tab" data-cat="activity">🎯</button>
+            <button class="chat-emoji-tab" data-cat="nature">🌿</button>
+            <button class="chat-emoji-tab" data-cat="food">🍕</button>
+            <button class="chat-emoji-tab" data-cat="travel">✈️</button>
+          </div>
+          <div class="chat-emoji-grid" id="chat-emoji-grid"></div>
+        </div>
         <div class="chat-image-preview" id="chat-image-preview" style="display:none;">
           <img id="chat-preview-img" src="" alt="">
           <button id="chat-remove-image" class="chat-remove-img">×</button>
         </div>
         <div class="chat-input-row">
+          <button id="chat-emoji-btn" class="chat-media-btn" title="Emoji">😊</button>
           <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200">
           <button id="chat-camera-btn" class="chat-media-btn" title="Camera">📷</button>
           <button id="chat-file-btn" class="chat-media-btn" title="Photo">🖼️</button>

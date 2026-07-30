@@ -197,7 +197,7 @@ async function checkNavigationState() {
       startSimulatorClock();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
-      registerFCMToken();
+      setTimeout(registerFCMToken, 4000);
       startHeartbeat();
     } else {
       navigateTo('auth');
@@ -1163,8 +1163,30 @@ async function registerFCMToken() {
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications');
 
-    await PushNotifications.requestPermissions();
-    await PushNotifications.register();
+    // Check current permission status first — don't ask if already granted/denied
+    const { receive } = await PushNotifications.checkPermissions();
+
+    if (receive === 'granted') {
+      // Already allowed — just register silently
+      await PushNotifications.register();
+    } else if (receive === 'prompt' || receive === 'prompt-with-rationale') {
+      // Show our own explanation first, then ask
+      const shouldAsk = await showConfirmModal({
+        icon: '🔔',
+        title: 'Enable notifications',
+        body: 'Get notified instantly when friends update their status — even when the app is closed.',
+        okLabel: 'Enable',
+        okDanger: false
+      });
+      if (!shouldAsk) return;
+
+      const { receive: newStatus } = await PushNotifications.requestPermissions();
+      if (newStatus !== 'granted') return;
+      await PushNotifications.register();
+    } else {
+      // 'denied' — don't ask again
+      return;
+    }
 
     PushNotifications.addListener('registration', async (token) => {
       console.log('[Pulse] FCM token:', token.value);
@@ -1200,26 +1222,31 @@ function requestNotificationPermission() {
   const dashboard = document.getElementById('dashboard-view');
   if (!dashboard) return;
 
+  // Remove any existing banner
+  document.getElementById('notif-banner')?.remove();
+
   const banner = document.createElement('div');
   banner.id = 'notif-banner';
   banner.className = 'notif-banner';
   banner.innerHTML = `
-    <span style="font-size: 20px;">🔔</span>
-    <div style="flex: 1;">
-      <div style="font-weight: 600; font-size: 13px; color: hsl(var(--text-primary));">Enable lockscreen alerts</div>
-      <div style="font-size: 11px; color: hsl(var(--text-muted));">Get notified when friends update their status</div>
+    <div class="notif-banner-icon">🔔</div>
+    <div class="notif-banner-text">
+      <div class="notif-banner-title">Stay in the loop</div>
+      <div class="notif-banner-sub">Get notified instantly when friends update their status</div>
     </div>
-    <span style="font-size: 18px; color: hsl(var(--text-muted));">→</span>
+    <div class="notif-banner-actions">
+      <button class="notif-banner-allow btn btn-primary btn-small">Allow</button>
+      <button class="notif-banner-dismiss btn btn-secondary btn-small">Later</button>
+    </div>
   `;
 
-  banner.addEventListener('click', async () => {
+  banner.querySelector('.notif-banner-allow').addEventListener('click', async (e) => {
+    e.stopPropagation();
     const permission = await Notification.requestPermission();
     banner.remove();
-
     if (permission === 'granted') {
-      showToast('Lockscreen alerts enabled! 🔔');
+      showToast('Notifications enabled! 🔔');
       await subscribeToPushNotifications();
-
       setTimeout(() => {
         new Notification('Pulse is ready! 💫', {
           body: "You'll be notified when friends update their status.",
@@ -1228,6 +1255,11 @@ function requestNotificationPermission() {
         });
       }, 500);
     }
+  });
+
+  banner.querySelector('.notif-banner-dismiss').addEventListener('click', (e) => {
+    e.stopPropagation();
+    banner.remove();
   });
 
   const header = dashboard.querySelector('.header');
@@ -1647,6 +1679,59 @@ function initEventListeners() {
     }
   });
 
+  // Chat emoji picker
+  let chatEmojiCategory = 'mood';
+
+  function renderChatEmojiGrid(category) {
+    const grid = document.getElementById('chat-emoji-grid');
+    if (!grid) return;
+    const emojis = EMOJI_CATEGORIES[category] || EMOJI_CATEGORIES.mood;
+    grid.innerHTML = emojis.map(e =>
+      `<button type="button" data-emoji="${e}">${e}</button>`
+    ).join('');
+    grid.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const input = document.getElementById('chat-input');
+        if (!input) return;
+        const pos = input.selectionStart ?? input.value.length;
+        input.value = input.value.slice(0, pos) + btn.dataset.emoji + input.value.slice(pos);
+        // Move cursor after inserted emoji
+        const newPos = pos + btn.dataset.emoji.length;
+        input.setSelectionRange(newPos, newPos);
+        input.focus();
+      });
+    });
+  }
+
+  document.getElementById('chat-emoji-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const picker = document.getElementById('chat-emoji-picker');
+    if (!picker) return;
+    const isOpen = picker.style.display !== 'none';
+    picker.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) renderChatEmojiGrid(chatEmojiCategory);
+  });
+
+  document.getElementById('chat-emoji-tabs')?.querySelectorAll('.chat-emoji-tab').forEach(tab => {
+    tab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.chat-emoji-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      chatEmojiCategory = tab.dataset.cat;
+      renderChatEmojiGrid(chatEmojiCategory);
+    });
+  });
+
+  // Close picker when clicking outside
+  document.addEventListener('click', (e) => {
+    const picker = document.getElementById('chat-emoji-picker');
+    const btn = document.getElementById('chat-emoji-btn');
+    if (picker && !picker.contains(e.target) && e.target !== btn) {
+      picker.style.display = 'none';
+    }
+  });
+
   document.getElementById('chat-file-input')?.addEventListener('change', (e) => {
     if (e.target.files?.[0]) handleChatImage(e.target.files[0], false);
   });
@@ -1670,6 +1755,9 @@ function initEventListeners() {
 
   document.getElementById('chat-back-btn')?.addEventListener('click', () => {
     currentChatFriend = null;
+    // Close emoji picker if open
+    const picker = document.getElementById('chat-emoji-picker');
+    if (picker) picker.style.display = 'none';
     navigateTo('dashboard');
     loadDashboardData();
   });

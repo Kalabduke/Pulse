@@ -1402,10 +1402,87 @@ body {
 }
 
 /* ==========================================
-   CHAT INPUT — MATCH CONTAINER WIDTH
+   CHAT EMOJI PICKER
    ========================================== */
+.chat-emoji-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  background: #19142b;
+  border: 1px solid var(--border-glow);
+  border-radius: 16px 16px 0 0;
+  padding: 10px;
+  box-shadow: 0 -8px 30px rgba(0,0,0,0.5);
+  z-index: 30;
+  animation: slideUp 0.2s ease;
+}
+
+.chat-emoji-picker-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.chat-emoji-picker-tabs::-webkit-scrollbar { display: none; }
+
+.chat-emoji-tab {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255,255,255,0.04);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+  touch-action: manipulation;
+}
+
+.chat-emoji-tab.active {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+.chat-emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+.chat-emoji-grid::-webkit-scrollbar { width: 4px; }
+.chat-emoji-grid::-webkit-scrollbar-track { background: transparent; }
+.chat-emoji-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+.chat-emoji-grid button {
+  font-size: 20px;
+  padding: 5px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.1s, transform 0.1s;
+  touch-action: manipulation;
+  line-height: 1;
+}
+
+.chat-emoji-grid button:hover {
+  background: rgba(255,255,255,0.1);
+  transform: scale(1.2);
+}
+
+/* Make the input-area relative so the picker can anchor to it */
 .chat-input-area {
-  max-width: 600px;
+  position: relative;
 }
 
 /* ==========================================
