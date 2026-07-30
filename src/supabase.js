@@ -359,7 +359,8 @@ export async function fetchConnections() {
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
     // viewer_nickname: the private label YOU set for this friend — only visible to you
-    const myNickname = conn.viewer_nickname || null;
+    // Falls back to old nickname column if viewer_nickname not yet migrated
+    const myNickname = conn.viewer_nickname || conn.nickname || null;
 
     // Use live profile name as primary — snapshot is only a fallback if join failed
     const friendName = friend?.name || conn.friend_name_snapshot || 'Unknown';
@@ -448,61 +449,29 @@ export async function setConnectionNickname(connectionId, nickname) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  // Get the row to check which side we are
-  const { data: row, error: rowErr } = await client()
-    .from('connections')
-    .select('id, user_id, friend_id')
-    .eq('id', connectionId)
-    .single();
-
-  if (rowErr) throw rowErr;
-
   const trimmed = nickname?.trim() || null;
 
-  if (row.user_id === user.id) {
-    // We are the sender on this row — write to viewer_nickname (our private label)
-    const { data, error } = await client()
-      .from('connections')
-      .update({ viewer_nickname: trimmed })
-      .eq('id', connectionId)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
-  } else {
-    // We are the receiver — find our own row (where user_id = us, friend_id = them)
-    // If it doesn't exist we can't store a nickname without a row owned by us
-    const { data: ourRow, error: ourErr } = await client()
-      .from('connections')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('friend_id', row.user_id)
-      .maybeSingle();
+  // Try viewer_nickname first (new private column). If it fails (column doesn't exist yet),
+  // fall back to the shared nickname column.
+  const { data: d1, error: e1 } = await client()
+    .from('connections')
+    .update({ viewer_nickname: trimmed })
+    .eq('id', connectionId)
+    .select()
+    .single();
 
-    if (ourErr) throw ourErr;
+  if (!e1) return d1;
 
-    if (ourRow) {
-      const { data, error } = await client()
-        .from('connections')
-        .update({ viewer_nickname: trimmed })
-        .eq('id', ourRow.id)
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    } else {
-      // No row owned by us — fall back to updating the shared nickname column
-      // This only happens if the friendship was one-directional with no reverse row
-      const { data, error } = await client()
-        .from('connections')
-        .update({ nickname: trimmed })
-        .eq('id', connectionId)
-        .select()
-        .single();
-      if (error) throw error;
-      return data;
-    }
-  }
+  // Fallback: viewer_nickname column not yet added — use old nickname column
+  const { data: d2, error: e2 } = await client()
+    .from('connections')
+    .update({ nickname: trimmed })
+    .eq('id', connectionId)
+    .select()
+    .single();
+
+  if (e2) throw e2;
+  return d2;
 }
 
 export async function acceptInvitation(connectionId) {
