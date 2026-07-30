@@ -353,23 +353,20 @@ export async function fetchConnections() {
     }
   }
 
-  return (data || []).map(conn => {
+  const mapped = (data || []).map(conn => {
     const isSender = conn.sender?.id === user.id || conn.user_id === user.id;
     const friend = isSender ? conn.receiver : conn.sender;
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
-    // viewer_nickname: ONLY read it when YOU are the user_id (row owner).
-    // When isSender=false, this row belongs to your friend — their viewer_nickname
-    // is THEIR private label for you, not yours for them. Never show it to you.
-    const myNickname = isSender ? (conn.viewer_nickname || null) : null;
-
-    // Use live profile name as primary — snapshot is only a fallback if join failed
-    const friendName = friend?.name || conn.friend_name_snapshot || 'Unknown';
+    // viewer_nickname: only read from YOUR owned row (where user_id = you)
+    const myNickname = isSender ? (conn.viewer_nickname || conn.nickname || null) : null;
+    const friendName = friend?.name || 'Unknown';
 
     return {
       connectionId: conn.id,
       status: conn.status,
       isOutgoing: isSender,
+      isSender,
       nickname: myNickname,
       friendId,
       name: friendName,
@@ -382,6 +379,23 @@ export async function fetchConnections() {
       unreadCount: unreadCounts[friendId] || 0
     };
   });
+
+  // Dedup: when both A→B and B→A rows exist, prefer the one where isSender=true
+  // (our owned row) because it has our viewer_nickname. Keep only one entry per friendId.
+  const seen = new Map();
+  for (const conn of mapped) {
+    if (!conn.friendId) continue;
+    const existing = seen.get(conn.friendId);
+    if (!existing) {
+      seen.set(conn.friendId, conn);
+    } else if (conn.isSender && !existing.isSender) {
+      // Our owned row — use it (has our nickname)
+      seen.set(conn.friendId, { ...conn, unreadCount: existing.unreadCount || conn.unreadCount });
+    }
+    // If existing is already isSender, keep it
+  }
+
+  return Array.from(seen.values());
 }
 
 export async function sendConnectionRequest(friendIdOrName) {
@@ -452,83 +466,40 @@ export async function setConnectionNickname(connectionId, nickname, friendId) {
 
   const trimmed = nickname?.trim() || null;
 
-  // Always write to a row where user_id = me so isSender=true on read
-  // First check if we own this row
-  const { data: row } = await client()
+  // Step 1: Try to update a row we own directly
+  const { data: owned } = await client()
     .from('connections')
-    .select('id, user_id, friend_id')
+    .update({ viewer_nickname: trimmed })
     .eq('id', connectionId)
-    .maybeSingle();
-
-  if (row && row.user_id === user.id) {
-    // We own this row — write directly to viewer_nickname
-    const { data, error } = await client()
-      .from('connections')
-      .update({ viewer_nickname: trimmed })
-      .eq('id', connectionId)
-      .select().single();
-    // If viewer_nickname column doesn't exist yet, fall back to shared nickname
-    if (error) {
-      const { data: d2, error: e2 } = await client()
-        .from('connections')
-        .update({ nickname: trimmed })
-        .eq('id', connectionId)
-        .select().single();
-      if (e2) throw e2;
-      return d2;
-    }
-    return data;
-  }
-
-  // We are the receiver — find our own row (where we are user_id, they are friend_id)
-  const theirUserId = row?.user_id || null;
-  if (!theirUserId && !friendId) throw new Error('Cannot find connection row.');
-
-  const targetFriendId = theirUserId || friendId;
-
-  const { data: ourRow } = await client()
-    .from('connections')
-    .select('id')
     .eq('user_id', user.id)
-    .eq('friend_id', targetFriendId)
+    .select()
     .maybeSingle();
 
-  if (ourRow) {
-    // Write to our own row
-    const { data, error } = await client()
-      .from('connections')
-      .update({ viewer_nickname: trimmed })
-      .eq('id', ourRow.id)
-      .select().single();
-    // Fall back to shared nickname if column doesn't exist
-    if (error) {
-      const { data: d2, error: e2 } = await client()
-        .from('connections')
-        .update({ nickname: trimmed })
-        .eq('id', ourRow.id)
-        .select().single();
-      if (e2) throw e2;
-      return d2;
-    }
-    return data;
-  }
+  if (owned) return owned;
 
-  // No row owned by us exists — fall back to updating shared nickname on the existing row
-  // This works until the user runs the Supabase migration for viewer_nickname
-  const { data: d, error: e } = await client()
+  // Step 2: We don't own that row — upsert our own reverse row using friendId
+  // friendId is passed from the card button (the other person's profile id)
+  if (!friendId) throw new Error('Could not save nickname — missing friend ID.');
+
+  const { data, error } = await client()
     .from('connections')
-    .update({ nickname: trimmed })
-    .eq('id', connectionId)
-    .select().single();
-  if (e) throw e;
-  return d;
+    .upsert({
+      user_id: user.id,
+      friend_id: friendId,
+      status: 'connected',
+      viewer_nickname: trimmed
+    }, { onConflict: 'user_id,friend_id' })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 export async function acceptInvitation(connectionId) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  // First get the connection to find out who the sender is
   const { data: conn, error: connErr } = await client()
     .from('connections')
     .select('user_id, friend_id')
@@ -537,29 +508,26 @@ export async function acceptInvitation(connectionId) {
 
   if (connErr) throw connErr;
 
-  // Snapshot the name of the person we are accepting (the sender)
-  // We (the receiver) store their name so it stays frozen for us
-  let senderName = null;
-  if (conn) {
-    const { data: senderProfile } = await client()
-      .from('profiles')
-      .select('name')
-      .eq('id', conn.user_id)
-      .single();
-    senderName = senderProfile?.name || null;
-  }
-
+  // Mark the original row as connected
   const { data, error } = await client()
     .from('connections')
-    .update({
-      status: 'connected',
-      friend_name_snapshot: senderName
-    })
+    .update({ status: 'connected' })
     .eq('id', connectionId)
     .select()
     .single();
 
   if (error) throw error;
+
+  // Create a reverse row so the acceptor also owns a row and can store their own nickname
+  // Use upsert so it's safe to run multiple times
+  await client()
+    .from('connections')
+    .upsert({
+      user_id: user.id,
+      friend_id: conn.user_id,
+      status: 'connected'
+    }, { onConflict: 'user_id,friend_id' });
+
   return data;
 }
 
