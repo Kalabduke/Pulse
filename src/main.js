@@ -76,7 +76,7 @@ let currentChatFriend = null;
 const cache = {
   connections: null,
   connectionsAt: 0,
-  TTL: 30000
+  TTL: 45000  // 45s cache — reduces DB calls on slow connections
 };
 
 function getCachedConnections() {
@@ -170,13 +170,14 @@ function showToast(text, type = 'success') {
 
   textEl.textContent = text;
   iconEl.textContent = type === 'success' ? '✨' : type === 'error' ? '⚠️' : 'ℹ️';
-
   toast.className = `toast show toast-${type}`;
 
   clearTimeout(toastTimer);
+  // Errors stay longer so user can read them
+  const duration = type === 'error' ? 6000 : 4000;
   toastTimer = setTimeout(() => {
     toast.className = 'toast';
-  }, 4000);
+  }, duration);
 }
 
 /* ==========================================
@@ -445,7 +446,12 @@ async function loadDashboardData() {
 
   } catch (err) {
     console.error('[Pulse] Dashboard load error:', err);
-    showToast('Failed to sync. Check your connection.', 'error');
+    const msg = !navigator.onLine
+      ? 'You appear to be offline. Using cached data.'
+      : err.message?.includes('timeout') || err.message?.includes('network')
+        ? 'Slow connection — some data may be outdated.'
+        : 'Failed to sync. Check your connection.';
+    showToast(msg, 'error');
   }
 }
 
@@ -1152,35 +1158,42 @@ function escapeHtml(str) {
    ========================================== */
 
 async function resumeLocationSharing() {
-  // Called on login — if user was sharing before, resume the GPS interval
   try {
     const activeShares = await fetchMyActiveShares();
     if (!activeShares || activeShares.length === 0) return;
-
     state.sharingLocationWith = activeShares;
     updateLocationIndicator();
     showToast('📍 Resuming location sharing.');
-
-    // Restart the GPS update interval
-    if (state.locationInterval) clearInterval(state.locationInterval);
-    state.locationInterval = setInterval(() => {
-      if (state.sharingLocationWith.length === 0) {
-        clearInterval(state.locationInterval);
-        state.locationInterval = null;
-        return;
-      }
-      navigator.geolocation?.getCurrentPosition(async (p) => {
-        await updateLocationShare(p.coords.latitude, p.coords.longitude);
-      }, () => {});
-    }, 15000);
-
-    // Send current position immediately
     navigator.geolocation?.getCurrentPosition(async (p) => {
-      await updateLocationShare(p.coords.latitude, p.coords.longitude);
-    }, () => {});
+      await _sendPosition(p.coords.latitude, p.coords.longitude, true);
+    }, () => {}, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+    _startLocationInterval();
   } catch (e) {
-    // Location table doesn't exist yet or other error — ignore silently
+    // Table doesn't exist yet or network error — ignore silently
   }
+}
+
+// Track last sent position to avoid sending if barely moved
+let _lastSentLat = null;
+let _lastSentLng = null;
+
+function _haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // metres
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+async function _sendPosition(latitude, longitude, force = false) {
+  if (!force && _lastSentLat !== null) {
+    const dist = _haversineDistance(_lastSentLat, _lastSentLng, latitude, longitude);
+    if (dist < 15) return; // less than 15m change — don't bother sending
+  }
+  _lastSentLat = latitude;
+  _lastSentLng = longitude;
+  await updateLocationShare(latitude, longitude);
 }
 
 async function startSharingLocation(friendIds) {
@@ -1189,33 +1202,61 @@ async function startSharingLocation(friendIds) {
     return;
   }
 
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const { latitude, longitude } = pos.coords;
-    try {
-      await startLocationShare(friendIds, latitude, longitude);
-      state.sharingLocationWith = friendIds;
-      showToast('📍 Location shared!');
-      updateLocationIndicator();
+  return new Promise((resolve) => {
+    // Try high accuracy first, fall back to network/IP if it times out
+    const opts = { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 };
 
-      // Update every 15 seconds while sharing
-      if (state.locationInterval) clearInterval(state.locationInterval);
-      state.locationInterval = setInterval(() => {
-        if (state.sharingLocationWith.length === 0) {
-          clearInterval(state.locationInterval);
-          state.locationInterval = null;
-          return;
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const { latitude, longitude } = pos.coords;
+      try {
+        await startLocationShare(friendIds, latitude, longitude);
+        _lastSentLat = latitude;
+        _lastSentLng = longitude;
+        state.sharingLocationWith = [...new Set([...state.sharingLocationWith, ...friendIds])];
+        showToast('📍 Location shared!');
+        updateLocationIndicator();
+        _startLocationInterval();
+        resolve();
+      } catch (err) {
+        showToast(err.message || 'Failed to share location.', 'error');
+        resolve();
+      }
+    }, (err) => {
+      // Fall back to low accuracy if high accuracy timed out
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        try {
+          await startLocationShare(friendIds, latitude, longitude);
+          _lastSentLat = latitude;
+          _lastSentLng = longitude;
+          state.sharingLocationWith = [...new Set([...state.sharingLocationWith, ...friendIds])];
+          showToast('📍 Location shared (approximate).');
+          updateLocationIndicator();
+          _startLocationInterval();
+        } catch (e) {
+          showToast(e.message || 'Failed to share location.', 'error');
         }
-        navigator.geolocation.getCurrentPosition(async (p) => {
-          await updateLocationShare(p.coords.latitude, p.coords.longitude);
-        }, () => {});
-      }, 15000);
-    } catch (err) {
-      showToast(err.message || 'Failed to share location.', 'error');
+        resolve();
+      }, () => {
+        showToast('Could not get your location. Check permissions.', 'error');
+        resolve();
+      }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 30000 });
+    }, opts);
+  });
+}
+
+function _startLocationInterval() {
+  if (state.locationInterval) clearInterval(state.locationInterval);
+  state.locationInterval = setInterval(() => {
+    if (state.sharingLocationWith.length === 0) {
+      clearInterval(state.locationInterval);
+      state.locationInterval = null;
+      return;
     }
-  }, (err) => {
-    if (err.code === 1) showToast('Location permission denied.', 'error');
-    else showToast('Could not get your location.', 'error');
-  }, { enableHighAccuracy: true, timeout: 10000 });
+    navigator.geolocation?.getCurrentPosition(async (p) => {
+      await _sendPosition(p.coords.latitude, p.coords.longitude);
+    }, () => {}, { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 });
+  }, 30000); // every 30 seconds — accurate but low bandwidth
 }
 
 async function stopSharingLocation(friendIds = null) {
@@ -1234,17 +1275,19 @@ async function stopSharingLocation(friendIds = null) {
 }
 
 function updateLocationIndicator() {
-  const indicator = document.getElementById('location-share-indicator');
-  if (!indicator) return;
+  // Show green glow on the 📍 button when sharing is active — no text bar
+  const btn = document.getElementById('btn-location');
+  if (!btn) return;
   if (state.sharingLocationWith.length > 0) {
-    const names = state.sharingLocationWith.map(id => {
-      const c = state.connections.find(c => c.friendId === id);
-      return c?.nickname?.trim() || c?.name || id;
-    }).join(', ');
-    indicator.style.display = 'flex';
-    indicator.querySelector('.loc-names').textContent = names;
+    btn.style.background = 'rgba(34, 197, 94, 0.2)';
+    btn.style.borderColor = 'rgba(34, 197, 94, 0.5)';
+    btn.style.color = '#4ade80';
+    btn.title = `📍 Sharing with ${state.sharingLocationWith.length} friend(s) — tap to manage`;
   } else {
-    indicator.style.display = 'none';
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    btn.title = 'Share live location';
   }
 }
 
@@ -2018,7 +2061,7 @@ function initEventListeners() {
     showToast('Configuration reset.');
   });
 
-  // Location sharing
+  // Location sharing — Save-based flow
   document.getElementById('btn-location')?.addEventListener('click', () => {
     openLocationModal();
   });
@@ -2027,34 +2070,31 @@ function initEventListeners() {
     document.getElementById('location-modal').style.display = 'none';
   });
 
-  document.getElementById('btn-start-location')?.addEventListener('click', async () => {
-    const modal = document.getElementById('location-modal');
-    const checked = [...document.querySelectorAll('.location-friend-check:checked')].map(c => c.value);
-    if (checked.length === 0) {
-      showToast('Select at least one friend.', 'error');
-      return;
+  // Save: checked = share, unchecked = stop
+  document.getElementById('btn-save-location')?.addEventListener('click', async () => {
+    const saveBtn = document.getElementById('btn-save-location');
+    if (saveBtn.disabled) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+      const allChecks = [...document.querySelectorAll('.location-friend-check')];
+      const nowChecked  = allChecks.filter(c => c.checked).map(c => c.value);
+      const nowUnchecked = allChecks.filter(c => !c.checked).map(c => c.value);
+
+      const toStart = nowChecked.filter(id => !state.sharingLocationWith.includes(id));
+      const toStop  = nowUnchecked.filter(id => state.sharingLocationWith.includes(id));
+
+      document.getElementById('location-modal').style.display = 'none';
+
+      if (toStop.length > 0)  await stopSharingLocation(toStop);
+      if (toStart.length > 0) await startSharingLocation(toStart);
+    } catch (err) {
+      showToast(err.message || 'Failed to update location sharing.', 'error');
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
     }
-    modal.style.display = 'none';
-    await startSharingLocation(checked);
-  });
-
-  document.getElementById('btn-stop-selected-location')?.addEventListener('click', async () => {
-    const checked = [...document.querySelectorAll('.location-friend-check:checked')].map(c => c.value);
-    document.getElementById('location-modal').style.display = 'none';
-    await stopSharingLocation(checked.length > 0 ? checked : null);
-  });
-
-  document.getElementById('btn-stop-location')?.addEventListener('click', async () => {
-    await stopSharingLocation(null); // stop all
-  });
-
-  // Show/hide stop button based on selection in location modal
-  document.getElementById('location-friend-list')?.addEventListener('change', () => {
-    const anyChecked = document.querySelectorAll('.location-friend-check:checked').length > 0;
-    const anyActive = [...document.querySelectorAll('.location-friend-check:checked')]
-      .some(c => state.sharingLocationWith.includes(c.value));
-    document.getElementById('btn-stop-selected-location').style.display =
-      anyActive ? 'flex' : 'none';
   });
 }
 
@@ -2105,4 +2145,16 @@ document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
   registerServiceWorker();
   checkNavigationState();
+
+  // Network status feedback
+  window.addEventListener('online', () => {
+    showToast('Back online! ✅');
+    if (state.userProfile) {
+      invalidateCache();
+      loadDashboardData();
+    }
+  });
+  window.addEventListener('offline', () => {
+    showToast('You\'re offline. The app will sync when reconnected.', 'error');
+  });
 });
