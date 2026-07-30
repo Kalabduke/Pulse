@@ -642,6 +642,7 @@ function renderFriendsFeed() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const connId = btn.dataset.connId;
+      const friendId = btn.dataset.friendId;
       const currentNickname = btn.dataset.currentNickname;
       const realName = btn.dataset.realName;
 
@@ -649,7 +650,7 @@ function renderFriendsFeed() {
       if (input === null) return;
 
       try {
-        await setConnectionNickname(connId, input);
+        await setConnectionNickname(connId, input, friendId);
         showToast(input.trim() ? `Nickname set to "${input.trim()}"` : 'Nickname cleared.');
         invalidateCache();
         await loadDashboardData();

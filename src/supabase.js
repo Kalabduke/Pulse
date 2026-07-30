@@ -358,9 +358,10 @@ export async function fetchConnections() {
     const friend = isSender ? conn.receiver : conn.sender;
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
-    // viewer_nickname: the private label YOU set for this friend — only visible to you
-    // Do NOT fall back to nickname column — that leaks the other person's nickname for you
-    const myNickname = conn.viewer_nickname || null;
+    // viewer_nickname: ONLY read it when YOU are the user_id (row owner).
+    // When isSender=false, this row belongs to your friend — their viewer_nickname
+    // is THEIR private label for you, not yours for them. Never show it to you.
+    const myNickname = isSender ? (conn.viewer_nickname || null) : null;
 
     // Use live profile name as primary — snapshot is only a fallback if join failed
     const friendName = friend?.name || conn.friend_name_snapshot || 'Unknown';
@@ -445,33 +446,58 @@ export async function sendConnectionRequest(friendIdOrName) {
   return data;
 }
 
-export async function setConnectionNickname(connectionId, nickname) {
+export async function setConnectionNickname(connectionId, nickname, friendId) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
   const trimmed = nickname?.trim() || null;
 
-  // Try viewer_nickname first (new private column). If it fails (column doesn't exist yet),
-  // fall back to the shared nickname column.
-  const { data: d1, error: e1 } = await client()
+  // Always write to a row where user_id = me so isSender=true on read
+  // First check if we own this row
+  const { data: row } = await client()
     .from('connections')
-    .update({ viewer_nickname: trimmed })
+    .select('id, user_id, friend_id')
     .eq('id', connectionId)
-    .select()
-    .single();
+    .maybeSingle();
 
-  if (!e1) return d1;
+  if (row && row.user_id === user.id) {
+    // We own this row — write directly
+    const { data, error } = await client()
+      .from('connections')
+      .update({ viewer_nickname: trimmed })
+      .eq('id', connectionId)
+      .select().single();
+    if (error) throw error;
+    return data;
+  }
 
-  // Fallback: viewer_nickname column not yet added — use old nickname column
-  const { data: d2, error: e2 } = await client()
+  // We are the receiver — find our own row (where we are user_id, they are friend_id)
+  const theirUserId = row?.user_id || null;
+  if (!theirUserId && !friendId) throw new Error('Cannot find connection row.');
+
+  const targetFriendId = theirUserId || friendId;
+
+  const { data: ourRow } = await client()
     .from('connections')
-    .update({ nickname: trimmed })
-    .eq('id', connectionId)
-    .select()
-    .single();
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('friend_id', targetFriendId)
+    .maybeSingle();
 
-  if (e2) throw e2;
-  return d2;
+  if (ourRow) {
+    // Write to our own row
+    const { data, error } = await client()
+      .from('connections')
+      .update({ viewer_nickname: trimmed })
+      .eq('id', ourRow.id)
+      .select().single();
+    if (error) throw error;
+    return data;
+  }
+
+  // No row owned by us exists at all (one-directional friendship, rare)
+  // Cannot store private nickname without DB support
+  throw new Error('Nickname requires running the Supabase migration first.');
 }
 
 export async function acceptInvitation(connectionId) {
