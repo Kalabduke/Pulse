@@ -269,7 +269,6 @@
         <div class="chat-input-row">
           <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200">
           <button id="chat-camera-btn" class="chat-media-btn" title="Camera">📷</button>
-          <button id="chat-camera-face-toggle" class="chat-media-btn" data-face="environment" title="Switch front/back">🔄</button>
           <button id="chat-file-btn" class="chat-media-btn" title="Photo">🖼️</button>
           <button id="chat-send-btn" class="chat-send-btn">➤</button>
         </div>
@@ -328,16 +327,11 @@
             <button type="button" id="status-camera-btn" class="btn btn-secondary btn-small" style="font-size:13px; padding:10px 14px;">
               📷 Camera
             </button>
-            <button type="button" id="status-camera-face-toggle" class="btn btn-secondary btn-small" data-face="environment" style="font-size:13px; padding:10px 14px;" title="Switch front/back camera">
-              🔄 Back
-            </button>
             <button type="button" id="status-file-btn" class="btn btn-secondary btn-small" style="font-size:13px; padding:10px 14px;">
               🖼️ Gallery
             </button>
           </div>
-          <!-- camera input: capture attribute toggled by JS -->
           <input type="file" id="status-camera-input" accept="image/*" capture="environment" style="display:none;">
-          <!-- gallery input: no capture, opens file picker / gallery -->
           <input type="file" id="status-file-input" accept="image/*" style="display:none;">
 
           <!-- Recipient Selector -->

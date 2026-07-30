@@ -1380,10 +1380,7 @@ function initEventListeners() {
   });
 
   document.getElementById('status-camera-input')?.addEventListener('change', (e) => {
-    if (!e.target.files?.[0]) return;
-    // If user chose front camera toggle, mirror-correct the selfie
-    const isFront = document.getElementById('status-camera-face-toggle')?.dataset.face === 'user';
-    handleStatusImage(e.target.files[0], isFront);
+    if (e.target.files?.[0]) handleStatusImage(e.target.files[0], false);
   });
 
   document.getElementById('status-remove-image')?.addEventListener('click', () => {
@@ -1392,17 +1389,6 @@ function initEventListeners() {
 
   document.getElementById('status-camera-btn')?.addEventListener('click', () => {
     document.getElementById('status-camera-input')?.click();
-  });
-
-  // Front/back camera toggle for status
-  document.getElementById('status-camera-face-toggle')?.addEventListener('click', () => {
-    const toggle = document.getElementById('status-camera-face-toggle');
-    const input = document.getElementById('status-camera-input');
-    if (!toggle || !input) return;
-    const isFront = toggle.dataset.face === 'environment';
-    toggle.dataset.face = isFront ? 'user' : 'environment';
-    toggle.textContent = isFront ? '🔄 Front' : '🔄 Back';
-    input.setAttribute('capture', isFront ? 'user' : 'environment');
   });
 
   document.getElementById('status-file-btn')?.addEventListener('click', () => {
@@ -1493,9 +1479,7 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-camera-input')?.addEventListener('change', (e) => {
-    if (!e.target.files?.[0]) return;
-    const isFront = document.getElementById('chat-camera-face-toggle')?.dataset.face === 'user';
-    handleChatImage(e.target.files[0], isFront);
+    if (e.target.files?.[0]) handleChatImage(e.target.files[0], false);
   });
 
   document.getElementById('chat-remove-image')?.addEventListener('click', () => {
@@ -1504,17 +1488,6 @@ function initEventListeners() {
 
   document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
     document.getElementById('chat-camera-input')?.click();
-  });
-
-  // Front/back toggle for chat camera
-  document.getElementById('chat-camera-face-toggle')?.addEventListener('click', () => {
-    const toggle = document.getElementById('chat-camera-face-toggle');
-    const input = document.getElementById('chat-camera-input');
-    if (!toggle || !input) return;
-    const isFront = toggle.dataset.face === 'environment';
-    toggle.dataset.face = isFront ? 'user' : 'environment';
-    toggle.textContent = isFront ? '🔄' : '🔄';
-    input.setAttribute('capture', isFront ? 'user' : 'environment');
   });
 
   document.getElementById('chat-file-btn')?.addEventListener('click', () => {
