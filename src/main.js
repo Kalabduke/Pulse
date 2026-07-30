@@ -1171,11 +1171,7 @@ function initEventListeners() {
     }
   });
 
-<<<<<<< HEAD
-  document.getElementById('auth-form')?.addEventListener('submit', async (e) => {
-=======
   document.getElementById('btn-auth-submit')?.addEventListener('click', async (e) => {
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     e.preventDefault();
     clearAuthError();
 
@@ -1215,11 +1211,7 @@ function initEventListeners() {
     }
   });
 
-<<<<<<< HEAD
-  document.getElementById('link-forgot')?.addEventListener('click', async (e) => {
-=======
   document.getElementById('btn-forgot-password')?.addEventListener('click', async (e) => {
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     e.preventDefault();
     const email = document.getElementById('auth-email')?.value.trim();
     if (!email) {
@@ -1261,13 +1253,6 @@ function initEventListeners() {
     }
   });
 
-<<<<<<< HEAD
-  document.getElementById('status-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!state.userProfile) return;
-
-    const textInput = document.getElementById('status-text-input');
-=======
   // Status Modal
   document.getElementById('btn-open-status-modal')?.addEventListener('click', () => {
     const modal = document.getElementById('status-modal');
@@ -1286,7 +1271,6 @@ function initEventListeners() {
     const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
     const name = nameInput?.value.trim() || state.userProfile.name;
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     const text = textInput?.value.trim() || '';
 
     try {
@@ -1298,21 +1282,13 @@ function initEventListeners() {
         currentStatusImageUrl = imageUrl;
       }
 
-<<<<<<< HEAD
-      await updateStatus(state.selectedEmoji, text, imageUrl);
-=======
       await updateStatus(name, state.selectedEmoji, text, imageUrl);
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
       showToast('Status updated! 💫');
       if (textInput) textInput.value = '';
 
       removeStatusImage();
-<<<<<<< HEAD
-      await notifyFriendsOfUpdate();
-=======
       document.getElementById('status-modal').style.display = 'none';
       await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
       await loadDashboardData();
     } catch (err) {
       showToast(err.message || 'Failed to update status', 'error');
@@ -1327,15 +1303,6 @@ function initEventListeners() {
     if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
   });
 
-<<<<<<< HEAD
-  document.getElementById('btn-remove-status-image')?.addEventListener('click', () => {
-    removeStatusImage();
-  });
-
-  document.getElementById('connection-form')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const input = document.getElementById('connection-id-input');
-=======
   document.getElementById('status-remove-image')?.addEventListener('click', () => {
     removeStatusImage();
   });
@@ -1359,7 +1326,6 @@ function initEventListeners() {
   // Connections
   document.getElementById('btn-send-invite')?.addEventListener('click', async () => {
     const input = document.getElementById('friend-id-input');
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     const id = input?.value.trim();
 
     if (!id) {
@@ -1377,8 +1343,6 @@ function initEventListeners() {
     }
   });
 
-<<<<<<< HEAD
-=======
   document.getElementById('btn-refresh')?.addEventListener('click', async () => {
     invalidateCache();
     await loadDashboardData();
@@ -1406,7 +1370,6 @@ function initEventListeners() {
   });
 
   // Chat
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
   document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
@@ -1424,13 +1387,6 @@ function initEventListeners() {
     if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
   });
 
-<<<<<<< HEAD
-  document.getElementById('btn-remove-chat-image')?.addEventListener('click', () => {
-    removeChatImage();
-  });
-
-  document.getElementById('btn-chat-back')?.addEventListener('click', () => {
-=======
   document.getElementById('chat-remove-image')?.addEventListener('click', () => {
     removeChatImage();
   });
@@ -1444,26 +1400,12 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-back-btn')?.addEventListener('click', () => {
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     currentChatFriend = null;
     navigateTo('dashboard');
     loadDashboardData();
   });
 
-<<<<<<< HEAD
-  document.getElementById('my-id-display')?.addEventListener('click', async () => {
-    if (!state.userProfile?.id) return;
-    try {
-      await navigator.clipboard.writeText(state.userProfile.id);
-      showToast('Pulse ID copied to clipboard! 📋');
-    } catch (err) {
-      showToast('Failed to copy ID', 'error');
-    }
-  });
-
-=======
   // Reset config
->>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
   document.getElementById('btn-reset-config')?.addEventListener('click', async () => {
     const confirmed = await showConfirmModal({
       icon: '⚙️',
