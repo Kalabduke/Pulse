@@ -79,8 +79,7 @@ export async function signInWithGoogle() {
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'com.pulse.statusapp://login-callback',
-        skipBrowserRedirect: true,
+        redirectTo: 'https://pulse-gray-eight.vercel.app',
         queryParams: { prompt: 'select_account' }
       }
     });
