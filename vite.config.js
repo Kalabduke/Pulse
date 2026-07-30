@@ -7,7 +7,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,  // never expose source maps in production
     rollupOptions: {
       input: {
         main: 'index.html'

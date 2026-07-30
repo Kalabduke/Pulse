@@ -11,7 +11,6 @@ import {
   getSessionAndProfile,
   updateStatus,
   fetchConnections,
-  fetchStatusHistory,
   fetchFriendsStatusHistory,
   sendConnectionRequest,
   setConnectionNickname,
@@ -113,6 +112,15 @@ function startHeartbeat() {
    ========================================== */
 function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) {
   return new Promise((resolve, reject) => {
+    // Validate file type
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'];
+    if (!allowed.includes(file.type) && !file.type.startsWith('image/')) {
+      return reject(new Error('Only image files are allowed.'));
+    }
+    // Validate file size — 10MB max before compression
+    if (file.size > 10 * 1024 * 1024) {
+      return reject(new Error('Image is too large. Max 10MB.'));
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
@@ -581,7 +589,7 @@ function renderFriendsFeed() {
 
     const avatarInner = hasImage
       ? `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
-      : `<span>${displayEmoji || '😊'}</span>`;
+      : `<span>${escapeHtml(displayEmoji || '😊')}</span>`;
 
     card.innerHTML = `
       <div class="avatar-container${hasImage ? ' has-photo' : ''}" style="position:relative;flex-shrink:0;">
@@ -1531,6 +1539,12 @@ function initEventListeners() {
   document.getElementById('btn-save-status')?.addEventListener('click', async () => {
     if (!state.userProfile) return;
 
+    const saveBtn = document.getElementById('btn-save-status');
+    if (saveBtn.disabled) return;
+    saveBtn.disabled = true;
+    const origText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '<span>Saving...</span>';
+
     const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
     const name = nameInput?.value.trim() || state.userProfile.name;
@@ -1579,6 +1593,9 @@ function initEventListeners() {
       }
     } catch (err) {
       showToast(err.message || 'Failed to update status', 'error');
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = origText;
     }
   });
 
@@ -1628,12 +1645,15 @@ function initEventListeners() {
   // Connections
   document.getElementById('btn-send-invite')?.addEventListener('click', async () => {
     const input = document.getElementById('friend-id-input');
+    const btn = document.getElementById('btn-send-invite');
     const id = input?.value.trim();
 
     if (!id) {
       showToast('Please enter a Pulse ID.', 'error');
       return;
     }
+    if (btn.disabled) return;
+    btn.disabled = true;
 
     try {
       await sendConnectionRequest(id);
@@ -1642,6 +1662,8 @@ function initEventListeners() {
       await loadDashboardData();
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
+    } finally {
+      btn.disabled = false;
     }
   });
 

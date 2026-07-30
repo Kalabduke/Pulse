@@ -112,14 +112,6 @@ export async function signOutUser() {
   if (error) throw error;
 }
 
-export async function setSessionFromTokens(accessToken, refreshToken) {
-  const { error } = await client().auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken
-  });
-  if (error) throw error;
-}
-
 export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
   let { data: { session }, error: sessionError } = await client().auth.getSession();
   if (sessionError) throw sessionError;
@@ -219,6 +211,12 @@ export async function updateStatus(name, emoji, text, imageUrl = null) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
+  // Server-side validation
+  if (!name || typeof name !== 'string') throw new Error('Display name is required.');
+  if (name.length > 50) throw new Error('Display name must be 50 characters or less.');
+  if (text && text.length > 60) throw new Error('Status text must be 60 characters or less.');
+  if (!emoji || typeof emoji !== 'string') throw new Error('Emoji is required.');
+
   const { data, error } = await client()
     .from('profiles')
     .upsert({
@@ -263,18 +261,6 @@ export async function fetchFriendsStatusHistory(connectedFriendIds) {
       profile:profiles!status_history_user_id_fkey(id, name)
     `)
     .in('user_id', connectedFriendIds)
-    .order('created_at', { ascending: false })
-    .limit(15);
-
-  if (error) throw error;
-  return data || [];
-}
-
-export async function fetchStatusHistory(userId) {
-  const { data, error } = await client()
-    .from('status_history')
-    .select('id, status_emoji, status_text, status_image_url, created_at')
-    .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(15);
 
@@ -446,8 +432,6 @@ export async function sendConnectionRequest(friendIdOrName) {
   return data;
 }
 
-export const inviteFriendByEmail = sendConnectionRequest;
-
 export async function setConnectionNickname(connectionId, nickname) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
@@ -548,6 +532,9 @@ export async function fetchPrivateStatusesForMe() {
 export async function sendDirectMessage(recipientId, text, imageUrl = null) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
+  if (!recipientId) throw new Error('Recipient is required.');
+  if (!text?.trim() && !imageUrl) throw new Error('Message cannot be empty.');
+  if (text && text.length > 500) throw new Error('Message too long. Max 500 characters.');
 
   const { data, error } = await client()
     .from('messages')
