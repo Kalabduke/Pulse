@@ -404,7 +404,7 @@ function renderEmojiGrid(category, selectedEmoji) {
 
   const emojis = EMOJI_CATEGORIES[category] || EMOJI_CATEGORIES.mood;
   grid.innerHTML = emojis.map(e => `
-    <button class="emoji-btn ${e === selectedEmoji ? 'active' : ''}" data-emoji="${e}">${e}</button>
+    <button class="emoji-btn ${e === selectedEmoji ? 'active' : ''}" data-emoji="${e}" type="button">${e}</button>
   `).join('');
 
   grid.querySelectorAll('.emoji-btn').forEach(btn => {
@@ -496,27 +496,25 @@ function renderFriendsFeed() {
     const card = document.createElement('div');
     card.className = 'glass-card user-status-card';
     card.dataset.friendId = friend.friendId;
-    card.style.cursor = 'pointer';
-    card.style.position = 'relative';
 
     card.innerHTML = `
-      <div class="avatar-container" style="position:relative;">
+      <div class="avatar-container" style="position:relative;flex-shrink:0;">
         <span>${friend.statusEmoji || '😊'}</span>
         ${online ? '<span class="online-pulse-dot"></span>' : '<span class="offline-dot"></span>'}
         ${hasUnread ? `<span class="unread-badge">${friend.unreadCount}</span>` : ''}
       </div>
-      <div class="status-details" style="flex:1; min-width:0;">
-        <div class="status-user-name">
-          <span class="friend-display-name">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
-          ${friend.nickname ? `<span class="real-name-tag" title="Real name">${escapeHtml(friend.name)}</span>` : ''}
+      <div class="status-details" style="flex:1;min-width:0;overflow:hidden;">
+        <div class="status-user-name" style="flex-wrap:wrap;row-gap:4px;">
+          <span class="friend-display-name" style="font-size:15px;font-weight:700;">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
+          ${friend.nickname ? `<span class="real-name-tag">${escapeHtml(friend.name)}</span>` : ''}
         </div>
         <div class="status-bubble">"${escapeHtml(friend.statusText || 'Available')}"</div>
-        ${hasImage ? `<img src="${friend.statusImageUrl}" class="friend-status-image" alt="Status image" loading="lazy" onclick="event.stopPropagation()">` : ''}
+        ${hasImage ? `<img src="${escapeHtml(friend.statusImageUrl)}" class="friend-status-image" alt="Status image" loading="lazy" onclick="event.stopPropagation()">` : ''}
         <div class="status-time">${formatTimeAgo(friend.updatedAt)}</div>
       </div>
-      <div style="display: flex; flex-direction: column; gap: 6px; align-self: flex-start; flex-shrink: 0;">
-        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${friend.connectionId}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding: 4px 8px; font-size: 11px;">${friend.nickname ? '✏️' : '🏷️'}</button>
-        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${friend.connectionId}" style="padding: 4px 8px; font-size: 11px;">✕</button>
+      <div style="display:flex;flex-direction:row;gap:6px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
+        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:6px 10px;font-size:14px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
+        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" style="padding:6px 10px;font-size:14px;line-height:1;">✕</button>
       </div>
     `;
     container.appendChild(card);
@@ -663,11 +661,14 @@ function renderStatusHistory(history, connections = []) {
   if (!container) return;
 
   if (!history || history.length === 0) {
-    container.innerHTML = `<div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No history yet — connect with friends and their updates will appear here.</div>`;
+    container.innerHTML = `<div style="font-size: 13px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No history yet — connect with friends and their updates will appear here.</div>`;
     return;
   }
 
-  container.innerHTML = history.map(entry => {
+  // Show only most recent 5
+  const recent = history.slice(0, 5);
+
+  container.innerHTML = `<div class="history-list">${recent.map(entry => {
     const realName = entry.profile?.name || 'Unknown';
     const conn = connections.find(c => c.friendId === entry.profile?.id);
     const displayName = conn?.nickname?.trim() || realName;
@@ -675,16 +676,16 @@ function renderStatusHistory(history, connections = []) {
 
     return `
       <div class="history-item">
-        <span class="history-emoji">${entry.status_emoji}</span>
+        <div class="history-emoji">${escapeHtml(entry.status_emoji)}</div>
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
-          <span class="history-text">"${escapeHtml(entry.status_text)}"</span>
-          ${hasImage ? `<img src="${entry.status_image_url}" class="history-image" alt="Status image" loading="lazy">` : ''}
+          <span class="history-text">"${escapeHtml(entry.status_text || '')}"</span>
+          ${hasImage ? `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy">` : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
     `;
-  }).join('');
+  }).join('')}</div>`;
 }
 
 /* ==========================================
@@ -717,7 +718,7 @@ async function loadChatMessages(friendId) {
 
   try {
     const messages = await fetchDirectMessages(friendId);
-    const { data: { user } } = await client().auth.getUser();
+    const myId = state.userProfile?.id;
 
     if (messages.length === 0) {
       container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
@@ -725,13 +726,13 @@ async function loadChatMessages(friendId) {
     }
 
     container.innerHTML = messages.map(msg => {
-      const isSent = msg.sender_id === user.id;
+      const isSent = msg.sender_id === myId;
       const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
       return `
         <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
           ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
-          ${msg.image_url ? `<img src="${msg.image_url}" alt="Shared image" loading="lazy" onclick="window.open('${msg.image_url}', '_blank')">` : ''}
+          ${msg.image_url ? `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="window.open('${escapeHtml(msg.image_url)}', '_blank')">` : ''}
           <span class="chat-bubble-time">${time}</span>
         </div>
       `;
@@ -841,6 +842,7 @@ function showConfirmModal({ icon = '⚠️', title, body, okLabel = 'Confirm', o
     document.getElementById('confirm-modal-title').textContent = title;
     document.getElementById('confirm-modal-body').textContent = body;
     const okBtn = document.getElementById('confirm-modal-ok');
+    const cancelBtn = document.getElementById('confirm-modal-cancel');
     okBtn.textContent = okLabel;
     okBtn.className = `btn ${okDanger ? 'btn-danger-solid' : 'btn-primary'}`;
 
@@ -848,15 +850,16 @@ function showConfirmModal({ icon = '⚠️', title, body, okLabel = 'Confirm', o
 
     const cleanup = (result) => {
       modal.style.display = 'none';
-      okBtn.replaceWith(okBtn.cloneNode(true));
-      document.getElementById('confirm-modal-cancel').replaceWith(
-        document.getElementById('confirm-modal-cancel').cloneNode(true)
-      );
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
       resolve(result);
     };
 
-    document.getElementById('confirm-modal-ok').addEventListener('click', () => cleanup(true), { once: true });
-    document.getElementById('confirm-modal-cancel').addEventListener('click', () => cleanup(false), { once: true });
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+
+    okBtn.addEventListener('click', onOk, { once: true });
+    cancelBtn.addEventListener('click', onCancel, { once: true });
   });
 }
 
@@ -905,6 +908,8 @@ function showNicknameModal({ realName, currentNickname = '' }) {
 /* ==========================================
    iOS POLLING FALLBACK
    ========================================== */
+let _visibilityListenerAdded = false;
+
 function startPollingFallback() {
   if (state.pollInterval) clearInterval(state.pollInterval);
 
@@ -918,18 +923,21 @@ function startPollingFallback() {
     }
   }, isIOS ? 20000 : 45000);
 
-  document.addEventListener('visibilitychange', async () => {
-    if (document.visibilityState === 'visible' && state.userProfile) {
-      const now = Date.now();
-      if (!startPollingFallback._lastVisible || now - startPollingFallback._lastVisible > 30000) {
-        invalidateCache();
-        await loadDashboardData();
+  if (!_visibilityListenerAdded) {
+    _visibilityListenerAdded = true;
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && state.userProfile) {
+        const now = Date.now();
+        if (!startPollingFallback._lastVisible || now - startPollingFallback._lastVisible > 30000) {
+          invalidateCache();
+          await loadDashboardData();
+        }
+        startPollingFallback._lastVisible = now;
+      } else {
+        startPollingFallback._lastVisible = Date.now();
       }
-      startPollingFallback._lastVisible = now;
-    } else {
-      startPollingFallback._lastVisible = Date.now();
-    }
-  });
+    });
+  }
 }
 
 /* ==========================================
@@ -1261,8 +1269,12 @@ function initEventListeners() {
   document.getElementById('btn-open-status-modal')?.addEventListener('click', () => {
     const modal = document.getElementById('status-modal');
     const nameInput = document.getElementById('status-name-input');
+    const textInput = document.getElementById('status-text-input');
     if (nameInput) nameInput.value = state.userProfile?.name || '';
-    
+    // Pre-fill current status text so user can edit rather than retype
+    if (textInput) textInput.value = state.userProfile?.status_text || '';
+
+    // Reset image state
     isStatusImageRemoved = false;
     currentStatusImage = null;
     if (state.userProfile?.status_image_url) {
@@ -1273,6 +1285,13 @@ function initEventListeners() {
     } else {
       removeStatusImage();
     }
+
+    // Reset recipient to "all"
+    const radioAll = document.querySelector('input[name="recipient"][value="all"]');
+    if (radioAll) radioAll.checked = true;
+    const directSelect = document.getElementById('direct-friend-select');
+    if (directSelect) directSelect.style.display = 'none';
+
     if (modal) modal.style.display = 'flex';
   });
 
@@ -1288,6 +1307,16 @@ function initEventListeners() {
     const name = nameInput?.value.trim() || state.userProfile.name;
     const text = textInput?.value.trim() || '';
 
+    // Check recipient mode
+    const recipientRadio = document.querySelector('input[name="recipient"]:checked');
+    const recipientMode = recipientRadio?.value || 'all';
+    const directFriendId = document.getElementById('direct-friend-select')?.value;
+
+    if (recipientMode === 'direct' && !directFriendId) {
+      showToast('Please select a friend to send to.', 'error');
+      return;
+    }
+
     try {
       let imageUrl = null;
 
@@ -1301,13 +1330,25 @@ function initEventListeners() {
         imageUrl = state.userProfile?.status_image_url || null;
       }
 
-      await updateStatus(name, state.selectedEmoji, text, imageUrl);
-      showToast('Status updated! 💫');
-      if (textInput) textInput.value = '';
-
-      document.getElementById('status-modal').style.display = 'none';
-      await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
-      await loadDashboardData();
+      if (recipientMode === 'direct' && directFriendId) {
+        // Direct message: send as DM, do NOT update global profile status
+        await sendDirectMessage(directFriendId, `${state.selectedEmoji} ${text}`, imageUrl);
+        showToast('Status sent directly! 💬');
+        document.getElementById('status-modal').style.display = 'none';
+        // Open chat with that friend
+        const friend = state.connections.find(c => c.friendId === directFriendId);
+        if (friend) {
+          setTimeout(() => openChat(friend), 300);
+        }
+      } else {
+        // All friends: update public profile
+        await updateStatus(name, state.selectedEmoji, text, imageUrl);
+        showToast('Status updated! 💫');
+        if (textInput) textInput.value = '';
+        document.getElementById('status-modal').style.display = 'none';
+        await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
+        await loadDashboardData();
+      }
     } catch (err) {
       showToast(err.message || 'Failed to update status', 'error');
     }
@@ -1326,10 +1367,12 @@ function initEventListeners() {
   });
 
   document.getElementById('status-camera-btn')?.addEventListener('click', () => {
+    // Camera button opens camera directly
     document.getElementById('status-camera-input')?.click();
   });
 
   document.getElementById('status-file-btn')?.addEventListener('click', () => {
+    // Gallery button opens file picker (no capture)
     document.getElementById('status-file-input')?.click();
   });
 
@@ -1340,6 +1383,20 @@ function initEventListeners() {
       if (select) select.style.display = e.target.value === 'direct' ? 'block' : 'none';
     });
   });
+
+  // Status text char counter
+  const statusTextInput = document.getElementById('status-text-input');
+  const charCounter = document.getElementById('status-char-counter');
+  if (statusTextInput && charCounter) {
+    statusTextInput.setAttribute('maxlength', '60');
+    const updateCounter = () => {
+      const len = statusTextInput.value.length;
+      charCounter.textContent = `${len}/60`;
+      charCounter.className = 'char-counter' + (len > 50 ? (len >= 60 ? ' over' : ' warn') : '');
+    };
+    statusTextInput.addEventListener('input', updateCounter);
+    updateCounter();
+  }
 
   // Connections
   document.getElementById('btn-send-invite')?.addEventListener('click', async () => {
@@ -1410,10 +1467,12 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
+    // Camera button opens camera directly
     document.getElementById('chat-camera-input')?.click();
   });
 
   document.getElementById('chat-file-btn')?.addEventListener('click', () => {
+    // Gallery button opens file picker (no capture)
     document.getElementById('chat-file-input')?.click();
   });
 

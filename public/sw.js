@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulse';
+const CACHE_NAME = 'pulse-v2';
 
 const SHELL_ASSETS = [
   '/',

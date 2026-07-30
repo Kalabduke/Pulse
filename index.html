@@ -202,35 +202,33 @@
 
         <!-- Friends Feed -->
         <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 8px;">
-          <h2 style="font-size: 18px; display: flex; align-items: center; gap: 8px;">
+          <h2 class="section-title">
             <span>Friends Updates</span>
-            <span id="connected-count" style="font-size: 12px; background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 10px; color: hsl(var(--text-secondary));">0/5</span>
+            <span id="connected-count" class="section-count">0/5</span>
           </h2>
           <div id="friends-status-container" style="display: flex; flex-direction: column; gap: 12px;">
-            <div class="glass-card" style="text-align: center; padding: 32px 16px; color: hsl(var(--text-muted)); font-style: italic;">
-              <span style="font-size: 32px; display: block; margin-bottom: 8px;">👉</span>
-              No connected friends yet. Invite someone below to see their real-time emotional status on your lockscreen!
+            <div class="glass-card empty-state-card">
+              <span class="empty-icon">👉</span>
+              No connected friends yet. Invite someone below to see their real-time status!
             </div>
           </div>
         </div>
 
         <!-- Connections Manager -->
         <div class="glass-card" style="margin-top: 8px;">
-          <h3 style="font-size: 16px; margin-bottom: 12px; color: #a5b4fc; display: flex; align-items: center; gap: 8px;">
-            <span>Connect with Friends</span>
+          <h3 class="section-title" style="font-size:16px;margin-bottom:12px;">
+            Connect with Friends
           </h3>
           <div style="display: flex; gap: 8px; margin-bottom: 16px;">
             <input type="text" id="friend-id-input" class="input-field" placeholder="Enter Friend's Pulse ID or Name" style="font-size: 13px; padding: 10px 12px;">
-            <button id="btn-send-invite" class="btn btn-primary btn-small" style="padding: 10px 16px; border-radius: 12px; font-weight: 600;">
+            <button id="btn-send-invite" class="btn btn-primary btn-small" style="padding: 10px 16px; border-radius: 12px; font-weight: 600; white-space:nowrap;">
               Connect
             </button>
           </div>
           <div class="connections-section">
-            <h4 style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--text-muted)); margin-bottom: 6px;">
-              Pending Invites
-            </h4>
+            <h4 class="field-label" style="margin-bottom:8px;">Pending Invites</h4>
             <div id="pending-invites-container" class="friends-list">
-              <div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No pending requests.</div>
+              <div style="font-size: 13px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No pending requests.</div>
             </div>
           </div>
         </div>
@@ -238,14 +236,14 @@
         <!-- Status History -->
         <div class="glass-card" style="margin-top: 4px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <h3 style="font-size: 16px; color: #a5b4fc;">Friends' Status History</h3>
+            <h3 class="section-title" style="font-size:16px;">Friends' Status History <span style="font-size:12px;font-weight:500;color:hsl(var(--text-muted));">(last 5)</span></h3>
             <button id="btn-refresh" class="btn btn-secondary btn-small" style="padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
               <span id="refresh-icon">↻</span>
               <span>Refresh</span>
             </button>
           </div>
           <div id="status-history-container" style="display: flex; flex-direction: column; gap: 8px;">
-            <div style="font-size: 12px; color: hsl(var(--text-muted)); font-style: italic;">Loading history...</div>
+            <div style="font-size: 13px; color: hsl(var(--text-muted)); font-style: italic;">Loading history...</div>
           </div>
         </div>
       </div>
@@ -315,7 +313,8 @@
 
           <div style="display: flex; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">STATUS TEXT (WHAT'S HAPPENING?)</label>
-            <input type="text" id="status-text-input" class="input-field" placeholder="e.g., Coding deep, Feeling energized, Resting...">
+            <input type="text" id="status-text-input" class="input-field" placeholder="e.g., Coding deep, Feeling energized, Resting..." maxlength="60">
+            <div id="status-char-counter" class="char-counter">0/60</div>
           </div>
 
           <!-- Image Preview Area -->
@@ -333,8 +332,10 @@
               🖼️ Gallery
             </button>
           </div>
-          <input type="file" id="status-file-input" accept="image/*" style="display:none;">
+          <!-- camera input: capture forces camera app -->
           <input type="file" id="status-camera-input" accept="image/*" capture="environment" style="display:none;">
+          <!-- gallery input: no capture, opens file picker / gallery -->
+          <input type="file" id="status-file-input" accept="image/*" style="display:none;">
 
           <!-- Recipient Selector -->
           <div class="recipient-selector">
