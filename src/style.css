@@ -224,6 +224,7 @@ body {
 .avatar-container.has-photo {
   overflow: hidden;
   padding: 0;
+  cursor: zoom-in;
 }
 
 .avatar-container.has-photo img {
@@ -232,6 +233,7 @@ body {
   object-fit: cover;
   border-radius: 50%;
   display: block;
+  pointer-events: none;
 }
 
 .online-pulse-dot {

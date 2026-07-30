@@ -285,3 +285,47 @@ on storage.objects for select using (bucket_id = 'pulse-images');
 create policy "Authenticated upload pulse-images"
 on storage.objects for insert to authenticated
 with check (bucket_id = 'pulse-images');
+
+-- ====================================================================
+-- PRIVATE STATUSES TABLE (per-friend status overrides)
+-- When a user pulses to one specific friend, it goes here.
+-- Only the target friend can read it; everyone else sees the public profile.
+-- ====================================================================
+
+create table if not exists public.private_statuses (
+  id uuid default gen_random_uuid() primary key,
+  from_user_id uuid references public.profiles(id) on delete cascade not null,
+  to_user_id   uuid references public.profiles(id) on delete cascade not null,
+  status_emoji      text not null default '😊',
+  status_text       text not null default '',
+  status_image_url  text default null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- One private status per sender→receiver pair (upsert friendly)
+  unique (from_user_id, to_user_id)
+);
+
+alter table public.private_statuses enable row level security;
+
+drop policy if exists "Sender can upsert their private statuses"   on public.private_statuses;
+drop policy if exists "Recipient can view private statuses sent to them" on public.private_statuses;
+drop policy if exists "Sender can delete their private statuses"   on public.private_statuses;
+
+-- Sender can insert/update their own private statuses
+create policy "Sender can upsert their private statuses"
+on public.private_statuses for all to authenticated
+using      (auth.uid() = from_user_id)
+with check (auth.uid() = from_user_id);
+
+-- Recipient can read statuses sent to them
+create policy "Recipient can view private statuses sent to them"
+on public.private_statuses for select to authenticated
+using (auth.uid() = to_user_id);
+
+-- Enable realtime so the recipient gets the update instantly
+do $
+begin
+  begin
+    alter publication supabase_realtime add table public.private_statuses;
+  exception when others then end;
+end;
+$;

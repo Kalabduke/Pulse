@@ -479,8 +479,43 @@ export async function removeConnection(connectionId) {
 }
 
 /* ==========================================
-   DIRECT MESSAGES
+   PRIVATE STATUSES (per-friend status overrides)
    ========================================== */
+
+export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { data, error } = await client()
+    .from('private_statuses')
+    .upsert({
+      from_user_id: user.id,
+      to_user_id: toUserId,
+      status_emoji: emoji,
+      status_text: text,
+      status_image_url: imageUrl,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'from_user_id,to_user_id' })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+// Fetch all private statuses sent TO the current user (from any friend)
+export async function fetchPrivateStatusesForMe() {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await client()
+    .from('private_statuses')
+    .select('from_user_id, status_emoji, status_text, status_image_url, updated_at')
+    .eq('to_user_id', user.id);
+
+  if (error) return [];
+  return data || [];
+}
 
 export async function sendDirectMessage(recipientId, text, imageUrl = null) {
   const { data: { user } } = await client().auth.getUser();
@@ -621,6 +656,13 @@ export function subscribeToPulseSync(userId, callback) {
       { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` },
       (payload) => {
         callback({ type: 'new_message', record: payload.new });
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'private_statuses', filter: `to_user_id=eq.${userId}` },
+      (payload) => {
+        callback({ type: 'private_status_updated', record: payload.new });
       }
     )
     .subscribe((status) => {

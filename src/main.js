@@ -26,6 +26,8 @@ import {
   fetchDirectMessages,
   markMessagesAsRead,
   updateLastSeen,
+  upsertPrivateStatus,
+  fetchPrivateStatusesForMe,
   client
 } from './supabase.js';
 
@@ -52,7 +54,8 @@ const state = {
   realtimeChannel: null,
   authMode: 'signin',
   clockInterval: null,
-  pollInterval: null
+  pollInterval: null,
+  privateStatuses: {}   // keyed by from_user_id → { status_emoji, status_text, status_image_url }
 };
 
 let currentStatusImage = null;
@@ -311,9 +314,10 @@ async function loadDashboardData() {
   try {
     const cachedConns = getCachedConnections();
 
-    const [profile, connections] = await Promise.all([
+    const [profile, connections, privateStatuses] = await Promise.all([
       getSessionAndProfile(_savedHash, _savedSearch),
-      cachedConns ? Promise.resolve(cachedConns) : fetchConnections()
+      cachedConns ? Promise.resolve(cachedConns) : fetchConnections(),
+      fetchPrivateStatusesForMe()
     ]);
 
     if (profile) {
@@ -321,6 +325,12 @@ async function loadDashboardData() {
       updateMyStatusUI();
       updateSimulatorUI();
     }
+
+    // Build a lookup: from_user_id → private status
+    state.privateStatuses = {};
+    (privateStatuses || []).forEach(ps => {
+      state.privateStatuses[ps.from_user_id] = ps;
+    });
 
     if (!cachedConns) setCachedConnections(connections);
     state.connections = connections;
@@ -375,11 +385,15 @@ function updateMyStatusUI() {
   if (myAvatarContainer) {
     if (state.userProfile.status_image_url) {
       myAvatarContainer.classList.add('has-photo');
+      myAvatarContainer.style.cursor = 'zoom-in';
+      myAvatarContainer.onclick = () => openFullImage(state.userProfile.status_image_url);
       if (myAvatar) {
         myAvatar.innerHTML = `<img src="${escapeHtml(state.userProfile.status_image_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`;
       }
     } else {
       myAvatarContainer.classList.remove('has-photo');
+      myAvatarContainer.style.cursor = '';
+      myAvatarContainer.onclick = null;
       if (myAvatar) myAvatar.textContent = state.userProfile.status_emoji || '👋';
     }
   } else {
@@ -506,7 +520,14 @@ function renderFriendsFeed() {
   container.innerHTML = '';
 
   connected.forEach(friend => {
-    const hasImage = friend.statusImageUrl;
+    // Private status overrides public — only this user can see their private status
+    const ps = state.privateStatuses[friend.friendId];
+    const displayEmoji = ps?.status_emoji  ?? friend.statusEmoji;
+    const displayText  = ps?.status_text   ?? friend.statusText;
+    const displayImage = ps?.status_image_url ?? friend.statusImageUrl;
+    const displayTime  = ps?.updated_at    ?? friend.updatedAt;
+
+    const hasImage = !!displayImage;
     const hasUnread = friend.unreadCount > 0;
     const online = isOnline(friend.lastSeen);
 
@@ -514,10 +535,13 @@ function renderFriendsFeed() {
     card.className = 'glass-card user-status-card';
     card.dataset.friendId = friend.friendId;
 
-    // Avatar: show status photo in the circle if available, otherwise emoji
+    const privateBadge = ps
+      ? `<span class="direct-status-badge">🔒 Private</span>`
+      : '';
+
     const avatarInner = hasImage
-      ? `<img src="${escapeHtml(friend.statusImageUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
-      : `<span>${friend.statusEmoji || '😊'}</span>`;
+      ? `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onclick="event.stopPropagation();openFullImage('${escapeHtml(displayImage)}')">`
+      : `<span>${displayEmoji || '😊'}</span>`;
 
     card.innerHTML = `
       <div class="avatar-container${hasImage ? ' has-photo' : ''}" style="position:relative;flex-shrink:0;">
@@ -530,8 +554,9 @@ function renderFriendsFeed() {
           <span class="friend-display-name" style="font-size:14px;font-weight:700;">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
           ${friend.nickname ? `<span class="real-name-tag">${escapeHtml(friend.name)}</span>` : ''}
         </div>
-        <div class="status-bubble">"${escapeHtml(friend.statusText || 'Available')}"</div>
-        <div class="status-time">${formatTimeAgo(friend.updatedAt)}</div>
+        ${privateBadge}
+        <div class="status-bubble">"${escapeHtml(displayText || 'Available')}"</div>
+        <div class="status-time">${formatTimeAgo(displayTime)}</div>
       </div>
       <div style="display:flex;flex-direction:row;gap:4px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
         <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
@@ -975,6 +1000,57 @@ function escapeHtml(str) {
 }
 
 /* ==========================================
+   FULL IMAGE VIEWER
+   ========================================== */
+function openFullImage(url) {
+  if (!url) return;
+  // Remove any existing viewer
+  document.getElementById('full-image-viewer')?.remove();
+
+  const viewer = document.createElement('div');
+  viewer.id = 'full-image-viewer';
+  viewer.style.cssText = `
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center;
+    cursor: zoom-out; animation: fadeIn 0.2s ease;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  `;
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = `
+    max-width: 96vw; max-height: 90vh;
+    object-fit: contain; border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+  `;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = `
+    position: absolute; top: 20px; right: 20px;
+    background: rgba(255,255,255,0.15); border: none;
+    color: white; font-size: 20px; width: 40px; height: 40px;
+    border-radius: 50%; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+  `;
+
+  viewer.appendChild(img);
+  viewer.appendChild(closeBtn);
+  document.body.appendChild(viewer);
+
+  const close = () => viewer.remove();
+  viewer.addEventListener('click', close);
+  closeBtn.addEventListener('click', (e) => { e.stopPropagation(); close(); });
+  document.addEventListener('keydown', function onKey(e) {
+    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); }
+  });
+}
+
+// Expose globally so inline onclick can call it
+window.openFullImage = openFullImage;
+
+/* ==========================================
    PWA — SERVICE WORKER & NOTIFICATIONS
    ========================================== */
 function registerServiceWorker() {
@@ -1352,15 +1428,13 @@ function initEventListeners() {
       }
 
       if (recipientMode === 'direct' && directFriendId) {
-        // Direct message: send as DM, do NOT update global profile status
-        await sendDirectMessage(directFriendId, `${state.selectedEmoji} ${text}`, imageUrl);
-        showToast('Status sent directly! 💬');
+        // Private status: write to private_statuses table only
+        // The target friend sees this as their status card; everyone else keeps seeing the public profile
+        await upsertPrivateStatus(directFriendId, state.selectedEmoji, text, imageUrl);
+        showToast('Status sent privately! 🔒');
         document.getElementById('status-modal').style.display = 'none';
-        // Open chat with that friend
-        const friend = state.connections.find(c => c.friendId === directFriendId);
-        if (friend) {
-          setTimeout(() => openChat(friend), 300);
-        }
+        invalidateCache();
+        await loadDashboardData();
       } else {
         // All friends: update public profile
         await updateStatus(name, state.selectedEmoji, text, imageUrl);
