@@ -331,10 +331,11 @@ async function loadDashboardData() {
   try {
     const cachedConns = getCachedConnections();
 
+    // fetchPrivateStatusesForMe is safe — if the table doesn't exist yet it returns empty
     const [profile, connections, privateStatuses] = await Promise.all([
       getSessionAndProfile(_savedHash, _savedSearch),
       cachedConns ? Promise.resolve(cachedConns) : fetchConnections(),
-      fetchPrivateStatusesForMe()
+      fetchPrivateStatusesForMe().catch(() => ({ received: [], sent: [] }))
     ]);
 
     if (profile) {
@@ -590,8 +591,8 @@ function renderFriendsFeed() {
       </div>
       <div class="status-details" style="flex:1;min-width:0;overflow:hidden;">
         <div class="status-user-name" style="flex-wrap:wrap;row-gap:4px;">
-          <span class="friend-display-name" style="font-size:14px;font-weight:700;">${escapeHtml(myNickname?.trim() || friend.name)}</span>
-          ${myNickname ? `<span class="real-name-tag">${escapeHtml(friend.name)}</span>` : ''}
+          <span class="friend-display-name" style="font-size:14px;font-weight:700;">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
+          ${friend.nickname ? `<span class="real-name-tag">${escapeHtml(friend.name)}</span>` : ''}
         </div>
         ${privateBadge}
         <div class="status-bubble">"${escapeHtml(displayText || 'Available')}"</div>
@@ -599,7 +600,7 @@ function renderFriendsFeed() {
         ${sentPreview}
       </div>
       <div style="display:flex;flex-direction:row;gap:4px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
-        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-friend-id="${escapeHtml(friend.friendId)}" data-current-nickname="${escapeHtml(myNickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${myNickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${myNickname ? '✏️' : '🏷️'}</button>
+        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-friend-id="${escapeHtml(friend.friendId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
         <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" style="padding:5px 8px;font-size:13px;line-height:1;">✕</button>
       </div>
     `;
@@ -627,13 +628,12 @@ function renderFriendsFeed() {
       const connId = btn.dataset.connId;
       const currentNickname = btn.dataset.currentNickname;
       const realName = btn.dataset.realName;
-      const friendId = btn.dataset.friendId;
 
       const input = await showNicknameModal({ realName, currentNickname });
       if (input === null) return;
 
       try {
-        await setConnectionNickname(connId, input, friendId);
+        await setConnectionNickname(connId, input);
         showToast(input.trim() ? `Nickname set to "${input.trim()}"` : 'Nickname cleared.');
         invalidateCache();
         await loadDashboardData();
