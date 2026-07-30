@@ -370,14 +370,19 @@ export async function fetchConnections() {
     const friend = isSender ? conn.receiver : conn.sender;
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
+    // Only use the nickname when YOU are the one who set it (you are the sender/initiator).
+    // If you are the receiver, conn.nickname is THEIR nickname for you — don't show it on your side.
+    const myNickname = isSender ? (conn.nickname || null) : null;
+
     return {
       connectionId: conn.id,
       status: conn.status,
       isOutgoing: isSender,
-      nickname: conn.nickname || null,
+      isSenderRow: isSender,   // track so nickname edit knows which row to use
+      nickname: myNickname,
       friendId,
       name: friend?.name || 'Unknown',
-      displayName: conn.nickname?.trim() || friend?.name || 'Unknown',
+      displayName: myNickname?.trim() || friend?.name || 'Unknown',
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
       statusImageUrl: friend?.status_image_url || null,
@@ -447,15 +452,55 @@ export async function sendConnectionRequest(friendIdOrName) {
 
 export const inviteFriendByEmail = sendConnectionRequest;
 
-export async function setConnectionNickname(connectionId, nickname) {
-  const { data, error } = await client()
+export async function setConnectionNickname(connectionId, nickname, friendId = null) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  // First check if this row belongs to us (user_id = me)
+  const { data: row } = await client()
     .from('connections')
-    .update({ nickname: nickname?.trim() || null })
+    .select('id, user_id, friend_id, status')
     .eq('id', connectionId)
-    .select()
     .single();
-  if (error) throw error;
-  return data;
+
+  if (row && row.user_id === user.id) {
+    // We own this row — update directly
+    const { data, error } = await client()
+      .from('connections')
+      .update({ nickname: nickname?.trim() || null })
+      .eq('id', connectionId)
+      .select()
+      .single();
+    if (error) throw error;
+    return data;
+  } else if (row && friendId) {
+    // We are the receiver — we need our own row to store our nickname
+    // Check if our row exists (we may have also sent a request, creating our own row)
+    const { data: ourRow } = await client()
+      .from('connections')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('friend_id', friendId)
+      .single();
+
+    if (ourRow) {
+      const { data, error } = await client()
+        .from('connections')
+        .update({ nickname: nickname?.trim() || null })
+        .eq('id', ourRow.id)
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
+    } else {
+      // No row owned by us — store nickname in a separate column update on the existing row
+      // Since RLS blocks us from updating their row, we use the reverse lookup:
+      // find any row where WE are user_id and THEY are friend_id
+      throw new Error('Cannot set nickname: no owned connection row found.');
+    }
+  } else {
+    throw new Error('Cannot set nickname on this connection.');
+  }
 }
 
 export async function acceptInvitation(connectionId) {
