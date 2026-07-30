@@ -85,36 +85,43 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ==========================================
-// CORE NOTIFICATION — one notification per update, no doubles
-// Uses a fixed tag per friend so rapid updates replace instead of stacking
+// CORE NOTIFICATION
+// One notification per friend (tag dedup), fires SW only when app is in background
 // ==========================================
 
-// SW-level dedup: track last notification time per friend
 const _swNotifTimes = {};
 
 function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
   const tag = `pulse-${friendName}`;
   const now = Date.now();
-
-  // If same friend notified within 8 seconds, replace silently (no buzz)
   const recentlySent = _swNotifTimes[tag] && (now - _swNotifTimes[tag] < 8000);
   _swNotifTimes[tag] = now;
 
-  return self.registration.showNotification(`${emoji} ${friendName}`, {
-    body: `"${statusText}"`,
-    icon: '/icon-192.png',
-    badge: '/notification-icon.png',
-    tag,
-    renotify: !recentlySent,   // only buzz if not a duplicate within 8s
-    requireInteraction: false,
-    silent: recentlySent,
-    vibrate: recentlySent ? [] : [200, 100, 200],
-    data: { url },
-    actions: [
-      { action: 'open',    title: '👀 View' },
-      { action: 'dismiss', title: '✕' }
-    ]
-  });
+  const title = `${emoji} ${friendName}`;
+  const body = `"${statusText}"`;
+
+  // Check if app is visible — if so, skip the OS notification (in-app toast is enough)
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(clientList => {
+      const appVisible = clientList.some(c => !c.hidden);
+      if (appVisible) return; // app is open and focused — don't double-notify
+
+      return self.registration.showNotification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/notification-icon.png',
+        tag,
+        renotify: !recentlySent,
+        requireInteraction: false,
+        silent: recentlySent,
+        vibrate: recentlySent ? [] : [150, 80, 150],
+        data: { url },
+        actions: [
+          { action: 'open',    title: '👀 View' },
+          { action: 'dismiss', title: '✕ Dismiss' }
+        ]
+      });
+    });
 }
 
 // ==========================================

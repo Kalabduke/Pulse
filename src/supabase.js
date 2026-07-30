@@ -359,8 +359,8 @@ export async function fetchConnections() {
     const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
     // viewer_nickname: the private label YOU set for this friend — only visible to you
-    // Falls back to old nickname column if viewer_nickname not yet migrated
-    const myNickname = conn.viewer_nickname || conn.nickname || null;
+    // Do NOT fall back to nickname column — that leaks the other person's nickname for you
+    const myNickname = conn.viewer_nickname || null;
 
     // Use live profile name as primary — snapshot is only a fallback if join failed
     const friendName = friend?.name || conn.friend_name_snapshot || 'Unknown';
