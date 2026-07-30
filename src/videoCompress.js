@@ -1,48 +1,65 @@
 /**
- * Video compression using ffmpeg.wasm
- * Lazy-loaded — the 25MB WASM binary is only downloaded when the user
- * actually picks a video. After the first download it's cached forever.
+ * Video compression using ffmpeg.wasm (single-threaded core)
+ * Does NOT require SharedArrayBuffer / COOP / COEP headers.
+ * Works on all browsers and devices without special server config.
  *
- * Target: 480p H.264, ~200kbps video + 64kbps AAC audio
- * Result: ~400-600KB for a 15-second clip
+ * Target: 480p H.264, ~200kbps → ~400-600KB for a 15s clip
  */
 
 let ffmpegInstance = null;
-let isLoading = false;
 let loadPromise = null;
 
-async function getFFmpeg() {
+async function getFFmpeg(onProgress) {
   if (ffmpegInstance) return ffmpegInstance;
   if (loadPromise) return loadPromise;
 
-  isLoading = true;
   loadPromise = (async () => {
+    onProgress?.(2);
+
     const { FFmpeg } = await import('@ffmpeg/ffmpeg');
     const { toBlobURL } = await import('@ffmpeg/util');
 
+    onProgress?.(5);
+
     const ffmpeg = new FFmpeg();
 
-    // Load the core WASM files from CDN (cached after first load)
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-    await ffmpeg.load({
-      coreURL:   await toBlobURL(`${baseURL}/ffmpeg-core.js`,   'text/javascript'),
-      wasmURL:   await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
+    ffmpeg.on('log', ({ message }) => {
+      // Uncomment for debugging:
+      // console.log('[FFmpeg]', message);
     });
 
+    // Use single-threaded core — no SharedArrayBuffer required
+    // Files served from the npm package via Vite's asset pipeline
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+
+    onProgress?.(8);
+
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`,   'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+
+    onProgress?.(15);
     ffmpegInstance = ffmpeg;
-    isLoading = false;
     return ffmpeg;
   })();
 
-  return loadPromise;
+  try {
+    return await loadPromise;
+  } catch (err) {
+    loadPromise = null;
+    ffmpegInstance = null;
+    throw err;
+  }
 }
 
 /**
- * Compress a video file to 480p H.264 MP4
- * @param {File} file - input video file
- * @param {Function} onProgress - called with 0-100 progress value
- * @returns {Promise<File>} compressed video file
+ * Compress a video to 480p H.264 MP4.
+ * Throws with "Can't upload now" style message on failure.
+ *
+ * @param {File} file - input video
+ * @param {Function} onProgress - 0-100 integer callback
+ * @returns {Promise<File>} compressed MP4
  */
 export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   if (!file.type.startsWith('video/')) {
@@ -51,79 +68,76 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
 
   let ffmpeg;
   try {
-    onProgress(5);
-    ffmpeg = await getFFmpeg();
+    ffmpeg = await getFFmpeg(onProgress);
   } catch (err) {
-    console.warn('[Pulse] ffmpeg.wasm failed to load, using original:', err.message);
-    return file; // fallback: upload original
+    throw new Error("Can't compress video right now. Please try again.");
   }
 
   const { fetchFile } = await import('@ffmpeg/util');
 
-  const inputName  = `input_${Date.now()}.${file.name.split('.').pop() || 'mp4'}`;
-  const outputName = `output_${Date.now()}.mp4`;
+  const ts         = Date.now();
+  const ext        = (file.name.split('.').pop() || 'mp4').toLowerCase();
+  const inputName  = `in_${ts}.${ext}`;
+  const outputName = `out_${ts}.mp4`;
+
+  // Remove stale progress listeners
+  ffmpeg.off('progress');
+
+  // Map ffmpeg's 0-1 progress to 15-95%
+  ffmpeg.on('progress', ({ progress }) => {
+    const pct = Math.min(95, Math.round(15 + (progress * 80)));
+    onProgress(pct);
+  });
 
   try {
-    onProgress(10);
-
-    // Write input file to ffmpeg virtual FS
+    onProgress(16);
     await ffmpeg.writeFile(inputName, await fetchFile(file));
-
     onProgress(20);
 
-    // Listen to ffmpeg progress events
-    ffmpeg.on('progress', ({ progress }) => {
-      // progress is 0-1
-      const pct = Math.round(20 + progress * 70); // 20-90%
-      onProgress(pct);
-    });
-
-    // H.264 480p, 200kbps video, 64kbps AAC audio
-    // -vf scale: keep aspect ratio, height=480, width divisible by 2
-    // -movflags faststart: makes MP4 streamable (plays while downloading)
     await ffmpeg.exec([
       '-i', inputName,
       '-vf', 'scale=-2:480',
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',   // fastest encoding on device
-      '-crf', '28',             // quality (23=great, 28=good, 32=acceptable)
+      '-preset', 'ultrafast',
+      '-crf', '28',
       '-b:v', '200k',
       '-maxrate', '300k',
-      '-bufsize', '400k',
+      '-bufsize', '600k',
       '-c:a', 'aac',
       '-b:a', '64k',
+      '-ar', '44100',
       '-movflags', '+faststart',
       '-y',
       outputName
     ]);
 
-    onProgress(92);
+    onProgress(96);
 
-    // Read output
-    const data = await ffmpeg.readFile(outputName);
-    onProgress(97);
-
-    // Cleanup virtual FS
-    await ffmpeg.deleteFile(inputName).catch(() => {});
-    await ffmpeg.deleteFile(outputName).catch(() => {});
-
-    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const data       = await ffmpeg.readFile(outputName);
+    const blob       = new Blob([data], { type: 'video/mp4' });
     const compressed = new File(
       [blob],
       file.name.replace(/\.[^.]+$/, '.mp4'),
       { type: 'video/mp4' }
     );
 
-    onProgress(100);
-
-    // If compression somehow made it bigger, return original
-    return compressed.size < file.size ? compressed : file;
-
-  } catch (err) {
-    // Cleanup on error
     await ffmpeg.deleteFile(inputName).catch(() => {});
     await ffmpeg.deleteFile(outputName).catch(() => {});
-    console.warn('[Pulse] FFmpeg compression failed, using original:', err.message);
-    return file; // fallback: upload original
+    ffmpeg.off('progress');
+
+    console.log(
+      `[Pulse] Video: ${(file.size/1024).toFixed(0)}KB → ${(compressed.size/1024).toFixed(0)}KB`
+    );
+
+    onProgress(100);
+    return compressed;
+
+  } catch (err) {
+    await ffmpeg.deleteFile(inputName).catch(() => {});
+    await ffmpeg.deleteFile(outputName).catch(() => {});
+    ffmpeg.off('progress');
+
+    console.error('[Pulse] FFmpeg error:', err);
+    throw new Error("Can't upload video right now. Please try again.");
   }
 }

@@ -1002,7 +1002,7 @@ async function handleStatusVideo(file) {
     showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
     _hideVideoProgress(progressEl);
-    showToast(err.message || 'Failed to process video.', 'error');
+    showToast(err.message || 'Video compression failed.', 'error');
   }
 }
 
@@ -1030,7 +1030,7 @@ async function handleChatVideo(file) {
     showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
     _hideVideoProgress(progressEl);
-    showToast(err.message || 'Failed to process video.', 'error');
+    showToast(err.message || 'Video compression failed.', 'error');
   }
 }
 
