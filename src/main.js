@@ -1,4 +1,5 @@
 import './style.css';
+import { compressVideoFFmpeg } from './videoCompress.js';
 import {
   initSupabase,
   isSupabaseConfigured,
@@ -154,130 +155,8 @@ function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) 
 }
 
 /* ==========================================
-   VIDEO COMPRESSION
-   Re-encodes video through canvas at 480p/360p, ~200kbps
-   Target: ~500KB for 15s clip
+   TOAST NOTIFICATIONS
    ========================================== */
-function compressVideo(file, targetHeight = 480) {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('video/')) {
-      return reject(new Error('Only video files are allowed.'));
-    }
-
-    const MAX_DURATION = 120;
-    const objectUrl = URL.createObjectURL(file);
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = 'auto';
-    video.crossOrigin = 'anonymous';
-
-    const cleanup = () => URL.revokeObjectURL(objectUrl);
-
-    video.addEventListener('error', (e) => {
-      cleanup();
-      // If we can't read/compress, upload the original file directly
-      console.warn('[Pulse] Video compression failed, uploading original:', e);
-      resolve(file);
-    });
-
-    video.addEventListener('loadedmetadata', () => {
-      if (video.duration > MAX_DURATION) {
-        cleanup();
-        return reject(new Error(`Video too long. Max ${MAX_DURATION} seconds.`));
-      }
-
-      // If MediaRecorder not supported, upload original
-      if (typeof MediaRecorder === 'undefined') {
-        cleanup();
-        return resolve(file);
-      }
-
-      const origW = video.videoWidth  || 854;
-      const origH = video.videoHeight || 480;
-      const scale = Math.min(1, targetHeight / origH);
-      const w = Math.round(origW * scale);
-      const h = Math.round(origH * scale);
-
-      const canvas = document.createElement('canvas');
-      canvas.width  = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-
-      const mimeTypes = [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-        'video/mp4'
-      ];
-      const mimeType = mimeTypes.find(m => {
-        try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
-      }) || 'video/webm';
-
-      let stream;
-      try {
-        stream = canvas.captureStream(24);
-      } catch (e) {
-        cleanup();
-        return resolve(file); // fallback: upload original
-      }
-
-      const chunks = [];
-      let recorder;
-      try {
-        recorder = new MediaRecorder(stream, {
-          mimeType,
-          videoBitsPerSecond: 200000
-        });
-      } catch (e) {
-        cleanup();
-        return resolve(file);
-      }
-
-      recorder.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
-      recorder.onstop = () => {
-        cleanup();
-        const blob = new Blob(chunks, { type: mimeType });
-        // If compression made it bigger somehow, use original
-        const result = blob.size < file.size ? blob : file;
-        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        resolve(new File([result], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: mimeType }));
-      };
-      recorder.onerror = () => {
-        cleanup();
-        resolve(file); // fallback
-      };
-
-      video.currentTime = 0;
-      video.play().then(() => {
-        recorder.start(250);
-
-        let animFrame;
-        const draw = () => {
-          if (video.ended || video.paused) {
-            cancelAnimationFrame(animFrame);
-            if (recorder.state === 'recording') recorder.stop();
-            return;
-          }
-          try { ctx.drawImage(video, 0, 0, w, h); } catch {}
-          animFrame = requestAnimationFrame(draw);
-        };
-        animFrame = requestAnimationFrame(draw);
-
-        video.onended = () => {
-          cancelAnimationFrame(animFrame);
-          if (recorder.state === 'recording') recorder.stop();
-        };
-      }).catch(() => {
-        cleanup();
-        resolve(file); // can't play — upload original
-      });
-    });
-
-    video.src = objectUrl;
-    video.load();
-  });
-}
 let toastTimer = null;
 
 function showToast(text, type = 'success') {
@@ -1100,38 +979,42 @@ async function handleStatusMedia(file, fromFrontCamera = false) {
 
 async function handleStatusVideo(file) {
   if (!file) return;
+  const progressEl = _showVideoProgress();
   try {
-    showToast('Processing video... ⏳', 'info');
-    const compressed = await compressVideo(file, 480);
-    const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
-    const sizeKB = (compressed.size / 1024).toFixed(0);
-    const sizeLabel = compressed.size < 1024 * 1024 ? `${sizeKB}KB` : `${sizeMB}MB`;
+    const compressed = await compressVideoFFmpeg(file, (pct) => {
+      _updateVideoProgress(progressEl, pct);
+    });
+    _hideVideoProgress(progressEl);
+    const sizeLabel = _sizeLabel(compressed.size);
     currentStatusImage = compressed;
     isStatusImageRemoved = false;
     const preview = document.getElementById('status-image-preview');
     if (preview) {
       preview.innerHTML = `
-        <video src="${URL.createObjectURL(compressed)}" class="status-video-preview"
-          controls playsinline muted style="width:100%;border-radius:12px;max-height:200px;display:block;"></video>
-        <button id="status-remove-image" class="status-remove-img" type="button" title="Remove video">✕</button>
+        <video src="${URL.createObjectURL(compressed)}"
+          controls playsinline muted
+          style="width:100%;border-radius:12px;max-height:200px;display:block;"></video>
+        <button id="status-remove-image" class="status-remove-img" type="button" title="Remove">✕</button>
       `;
       preview.style.display = 'block';
       preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
     }
     showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
+    _hideVideoProgress(progressEl);
     showToast(err.message || 'Failed to process video.', 'error');
   }
 }
 
 async function handleChatVideo(file) {
   if (!file) return;
+  const progressEl = _showVideoProgress();
   try {
-    showToast('Processing video... ⏳', 'info');
-    const compressed = await compressVideo(file, 480);
-    const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
-    const sizeKB = (compressed.size / 1024).toFixed(0);
-    const sizeLabel = compressed.size < 1024 * 1024 ? `${sizeKB}KB` : `${sizeMB}MB`;
+    const compressed = await compressVideoFFmpeg(file, (pct) => {
+      _updateVideoProgress(progressEl, pct);
+    });
+    _hideVideoProgress(progressEl);
+    const sizeLabel = _sizeLabel(compressed.size);
     currentChatImage = compressed;
     const preview = document.getElementById('chat-image-preview');
     if (preview) {
@@ -1146,8 +1029,44 @@ async function handleChatVideo(file) {
     }
     showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
+    _hideVideoProgress(progressEl);
     showToast(err.message || 'Failed to process video.', 'error');
   }
+}
+
+function _sizeLabel(bytes) {
+  return bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(0)}KB`
+    : `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function _showVideoProgress() {
+  const el = document.createElement('div');
+  el.id = 'video-progress-overlay';
+  el.innerHTML = `
+    <div class="video-progress-box">
+      <div style="font-size:24px;margin-bottom:10px;">🎬</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px;">Compressing video...</div>
+      <div class="video-progress-bar-track">
+        <div class="video-progress-bar-fill" id="vp-fill" style="width:0%"></div>
+      </div>
+      <div id="vp-pct" style="font-size:12px;color:hsl(var(--text-muted));margin-top:8px;">0%</div>
+    </div>
+  `;
+  document.body.appendChild(el);
+  return el;
+}
+
+function _updateVideoProgress(el, pct) {
+  if (!el) return;
+  const fill = el.querySelector('#vp-fill');
+  const label = el.querySelector('#vp-pct');
+  if (fill) fill.style.width = `${pct}%`;
+  if (label) label.textContent = `${pct}%`;
+}
+
+function _hideVideoProgress(el) {
+  el?.remove();
 }
 
 async function handleStatusImage(file, fromFrontCamera = false) {
