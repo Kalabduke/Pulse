@@ -24,7 +24,8 @@ import {
   sendDirectMessage,
   fetchDirectMessages,
   markMessagesAsRead,
-  updateLastSeen
+  updateLastSeen,
+  client
 } from './supabase.js';
 
 const _savedHash = window.location.hash;
@@ -489,13 +490,13 @@ function renderFriendsFeed() {
     const hasImage = friend.statusImageUrl;
     const hasUnread = friend.unreadCount > 0;
     const online = isOnline(friend.lastSeen);
-    
+
     const card = document.createElement('div');
     card.className = 'glass-card user-status-card';
     card.dataset.friendId = friend.friendId;
     card.style.cursor = 'pointer';
     card.style.position = 'relative';
-    
+
     card.innerHTML = `
       <div class="avatar-container" style="position:relative;">
         <span>${friend.statusEmoji || '😊'}</span>
@@ -689,20 +690,20 @@ function renderStatusHistory(history, connections = []) {
    ========================================== */
 async function openChat(friend) {
   currentChatFriend = friend;
-  
+
   document.getElementById('chat-friend-emoji').textContent = friend.statusEmoji;
   document.getElementById('chat-friend-name').textContent = friend.displayName;
-  
+
   document.querySelectorAll('.view-container').forEach(v => v.style.display = 'none');
   const chatView = document.getElementById('chat-view');
   if (chatView) chatView.style.display = 'flex';
-  
+
   await loadChatMessages(friend.friendId);
   await markMessagesAsRead(friend.friendId);
-  
+
   friend.unreadCount = 0;
   renderFriendsFeed();
-  
+
   const container = document.getElementById('chat-messages');
   if (container) container.scrollTop = container.scrollHeight;
 }
@@ -715,7 +716,7 @@ async function loadChatMessages(friendId) {
   try {
     const messages = await fetchDirectMessages(friendId);
     const { data: { user } } = await client().auth.getUser();
-    
+
     if (messages.length === 0) {
       container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
       return;
@@ -724,7 +725,7 @@ async function loadChatMessages(friendId) {
     container.innerHTML = messages.map(msg => {
       const isSent = msg.sender_id === user.id;
       const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      
+
       return `
         <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
           ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
@@ -733,7 +734,7 @@ async function loadChatMessages(friendId) {
         </div>
       `;
     }).join('');
-    
+
     container.scrollTop = container.scrollHeight;
   } catch (err) {
     container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
@@ -744,19 +745,19 @@ async function sendChatMessage() {
   const input = document.getElementById('chat-input');
   const text = input?.value.trim() || '';
   const sendBtn = document.getElementById('chat-send-btn');
-  
+
   if (!text && !currentChatImage) return;
   if (!currentChatFriend) return;
-  
+
   sendBtn.disabled = true;
-  
+
   try {
     let imageUrl = null;
     if (currentChatImage) {
       showToast('Uploading image...');
       imageUrl = await uploadStatusImage(currentChatImage);
     }
-    
+
     await sendDirectMessage(currentChatFriend.friendId, text, imageUrl);
     if (input) input.value = '';
     removeChatImage();
@@ -1170,7 +1171,11 @@ function initEventListeners() {
     }
   });
 
+<<<<<<< HEAD
   document.getElementById('auth-form')?.addEventListener('submit', async (e) => {
+=======
+  document.getElementById('btn-auth-submit')?.addEventListener('click', async (e) => {
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     e.preventDefault();
     clearAuthError();
 
@@ -1210,7 +1215,11 @@ function initEventListeners() {
     }
   });
 
+<<<<<<< HEAD
   document.getElementById('link-forgot')?.addEventListener('click', async (e) => {
+=======
+  document.getElementById('btn-forgot-password')?.addEventListener('click', async (e) => {
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     e.preventDefault();
     const email = document.getElementById('auth-email')?.value.trim();
     if (!email) {
@@ -1252,11 +1261,32 @@ function initEventListeners() {
     }
   });
 
+<<<<<<< HEAD
   document.getElementById('status-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!state.userProfile) return;
 
     const textInput = document.getElementById('status-text-input');
+=======
+  // Status Modal
+  document.getElementById('btn-open-status-modal')?.addEventListener('click', () => {
+    const modal = document.getElementById('status-modal');
+    const nameInput = document.getElementById('status-name-input');
+    if (nameInput) nameInput.value = state.userProfile?.name || '';
+    if (modal) modal.style.display = 'flex';
+  });
+
+  document.getElementById('btn-close-status-modal')?.addEventListener('click', () => {
+    document.getElementById('status-modal').style.display = 'none';
+  });
+
+  document.getElementById('btn-save-status')?.addEventListener('click', async () => {
+    if (!state.userProfile) return;
+
+    const nameInput = document.getElementById('status-name-input');
+    const textInput = document.getElementById('status-text-input');
+    const name = nameInput?.value.trim() || state.userProfile.name;
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     const text = textInput?.value.trim() || '';
 
     try {
@@ -1268,12 +1298,21 @@ function initEventListeners() {
         currentStatusImageUrl = imageUrl;
       }
 
+<<<<<<< HEAD
       await updateStatus(state.selectedEmoji, text, imageUrl);
+=======
+      await updateStatus(name, state.selectedEmoji, text, imageUrl);
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
       showToast('Status updated! 💫');
       if (textInput) textInput.value = '';
 
       removeStatusImage();
+<<<<<<< HEAD
       await notifyFriendsOfUpdate();
+=======
+      document.getElementById('status-modal').style.display = 'none';
+      await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
       await loadDashboardData();
     } catch (err) {
       showToast(err.message || 'Failed to update status', 'error');
@@ -1288,6 +1327,7 @@ function initEventListeners() {
     if (e.target.files?.[0]) handleStatusImage(e.target.files[0]);
   });
 
+<<<<<<< HEAD
   document.getElementById('btn-remove-status-image')?.addEventListener('click', () => {
     removeStatusImage();
   });
@@ -1295,6 +1335,31 @@ function initEventListeners() {
   document.getElementById('connection-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = document.getElementById('connection-id-input');
+=======
+  document.getElementById('status-remove-image')?.addEventListener('click', () => {
+    removeStatusImage();
+  });
+
+  document.getElementById('status-camera-btn')?.addEventListener('click', () => {
+    document.getElementById('status-camera-input')?.click();
+  });
+
+  document.getElementById('status-file-btn')?.addEventListener('click', () => {
+    document.getElementById('status-file-input')?.click();
+  });
+
+  // Recipient radio buttons
+  document.querySelectorAll('input[name="recipient"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+      const select = document.getElementById('direct-friend-select');
+      if (select) select.style.display = e.target.value === 'direct' ? 'block' : 'none';
+    });
+  });
+
+  // Connections
+  document.getElementById('btn-send-invite')?.addEventListener('click', async () => {
+    const input = document.getElementById('friend-id-input');
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     const id = input?.value.trim();
 
     if (!id) {
@@ -1312,6 +1377,36 @@ function initEventListeners() {
     }
   });
 
+<<<<<<< HEAD
+=======
+  document.getElementById('btn-refresh')?.addEventListener('click', async () => {
+    invalidateCache();
+    await loadDashboardData();
+    showToast('Refreshed! 🔄');
+  });
+
+  document.getElementById('btn-copy-id')?.addEventListener('click', async () => {
+    if (!state.userProfile?.id) return;
+    try {
+      await navigator.clipboard.writeText(state.userProfile.id);
+      showToast('Pulse ID copied to clipboard! 📋');
+    } catch (err) {
+      showToast('Failed to copy ID', 'error');
+    }
+  });
+
+  document.getElementById('my-id-display')?.addEventListener('click', async () => {
+    if (!state.userProfile?.id) return;
+    try {
+      await navigator.clipboard.writeText(state.userProfile.id);
+      showToast('Pulse ID copied to clipboard! 📋');
+    } catch (err) {
+      showToast('Failed to copy ID', 'error');
+    }
+  });
+
+  // Chat
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
   document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
@@ -1329,16 +1424,33 @@ function initEventListeners() {
     if (e.target.files?.[0]) handleChatImage(e.target.files[0]);
   });
 
+<<<<<<< HEAD
   document.getElementById('btn-remove-chat-image')?.addEventListener('click', () => {
     removeChatImage();
   });
 
   document.getElementById('btn-chat-back')?.addEventListener('click', () => {
+=======
+  document.getElementById('chat-remove-image')?.addEventListener('click', () => {
+    removeChatImage();
+  });
+
+  document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
+    document.getElementById('chat-camera-input')?.click();
+  });
+
+  document.getElementById('chat-file-btn')?.addEventListener('click', () => {
+    document.getElementById('chat-file-input')?.click();
+  });
+
+  document.getElementById('chat-back-btn')?.addEventListener('click', () => {
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
     currentChatFriend = null;
     navigateTo('dashboard');
     loadDashboardData();
   });
 
+<<<<<<< HEAD
   document.getElementById('my-id-display')?.addEventListener('click', async () => {
     if (!state.userProfile?.id) return;
     try {
@@ -1349,6 +1461,9 @@ function initEventListeners() {
     }
   });
 
+=======
+  // Reset config
+>>>>>>> 9624644 (Add image sharing, direct chat, 60s online presence, camera/gallery)
   document.getElementById('btn-reset-config')?.addEventListener('click', async () => {
     const confirmed = await showConfirmModal({
       icon: '⚙️',

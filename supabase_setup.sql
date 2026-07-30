@@ -9,8 +9,14 @@ create table if not exists public.profiles (
   name text,
   status_emoji text default '😊',
   status_text text default 'Available',
+  status_image_url text default null,
+  last_seen timestamp with time zone default timezone('utc'::text, now()),
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Alter table in case it was created in a previous version
+alter table public.profiles add column if not exists status_image_url text default null;
+alter table public.profiles add column if not exists last_seen timestamp with time zone default timezone('utc'::text, now());
 
 -- Enable Row Level Security (RLS) on Profiles
 alter table public.profiles enable row level security;
@@ -26,6 +32,9 @@ create table if not exists public.connections (
   -- Ensure unique connections (no duplicates between two people)
   unique (user_id, friend_id)
 );
+
+-- Alter table in case it was created in a previous version
+alter table public.connections add column if not exists nickname text default null;
 
 -- Enable Row Level Security (RLS) on Connections
 alter table public.connections enable row level security;
@@ -58,6 +67,7 @@ create trigger on_auth_user_created
 
 -- Drop existing policies first so this script is idempotent
 drop policy if exists "Allow logged in users to view all profiles" on public.profiles;
+drop policy if exists "Allow users to insert their own profile" on public.profiles;
 drop policy if exists "Allow users to update their own profile" on public.profiles;
 drop policy if exists "Allow users to view their own connections" on public.connections;
 drop policy if exists "Allow users to insert connections" on public.connections;
@@ -119,39 +129,24 @@ for delete
 to authenticated
 using (auth.uid() = user_id or auth.uid() = friend_id);
 
--- 5. ENABLE REALTIME SUBSCRIPTIONS
--- Enable real-time replication for profiles and connections so status updates sync immediately!
--- Note: If these tables are already in the publication, the alter will be a no-op.
-do $$
-begin
-  begin
-    alter publication supabase_realtime add table public.profiles;
-  exception when others then
-    -- already added, ignore
-  end;
-  begin
-    alter publication supabase_realtime add table public.connections;
-  exception when others then
-    -- already added, ignore
-  end;
-end;
-$$;
-
--- 6. ADD NICKNAME COLUMN (run this if you already have the connections table)
-alter table public.connections add column if not exists nickname text default null;
-
--- 7. STATUS HISTORY TABLE
--- Stores the last 15 status updates per user
+-- 5. STATUS HISTORY TABLE
+-- Stores status updates per user
 create table if not exists public.status_history (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
   status_emoji text not null,
   status_text text not null,
+  status_image_url text default null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+alter table public.status_history add column if not exists status_image_url text default null;
+
 -- Enable RLS
 alter table public.status_history enable row level security;
+
+drop policy if exists "Allow users to insert own history" on public.status_history;
+drop policy if exists "Allow users to view connected friends history" on public.status_history;
 
 -- Users can insert their own history
 create policy "Allow users to insert own history"
@@ -194,7 +189,37 @@ create trigger on_status_history_insert
   after insert on public.status_history
   for each row execute procedure public.trim_status_history();
 
--- 8. PUSH SUBSCRIPTIONS TABLE
+-- 6. MESSAGES TABLE (Direct Messaging)
+create table if not exists public.messages (
+  id uuid default gen_random_uuid() primary key,
+  sender_id uuid references public.profiles(id) on delete cascade not null,
+  recipient_id uuid references public.profiles(id) on delete cascade not null,
+  content_text text,
+  image_url text,
+  read_at timestamp with time zone default null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.messages enable row level security;
+
+drop policy if exists "Users can view their own direct messages" on public.messages;
+drop policy if exists "Users can send direct messages" on public.messages;
+drop policy if exists "Users can update direct messages sent to them" on public.messages;
+
+create policy "Users can view their own direct messages"
+on public.messages for select to authenticated
+using (auth.uid() = sender_id or auth.uid() = recipient_id);
+
+create policy "Users can send direct messages"
+on public.messages for insert to authenticated
+with check (auth.uid() = sender_id);
+
+create policy "Users can update direct messages sent to them"
+on public.messages for update to authenticated
+using (auth.uid() = recipient_id)
+with check (auth.uid() = recipient_id);
+
+-- 7. PUSH SUBSCRIPTIONS TABLE
 -- Stores Web Push subscriptions for background notifications
 create table if not exists public.push_subscriptions (
   id uuid default gen_random_uuid() primary key,
@@ -206,12 +231,14 @@ create table if not exists public.push_subscriptions (
 
 alter table public.push_subscriptions enable row level security;
 
+drop policy if exists "Users manage own push subscriptions" on public.push_subscriptions;
+
 create policy "Users manage own push subscriptions"
 on public.push_subscriptions for all to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
--- 9. FCM TOKENS TABLE (for native Android push notifications)
+-- 8. FCM TOKENS TABLE (for native Android push notifications)
 create table if not exists public.fcm_tokens (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
@@ -221,7 +248,40 @@ create table if not exists public.fcm_tokens (
 
 alter table public.fcm_tokens enable row level security;
 
+drop policy if exists "Users manage own FCM tokens" on public.fcm_tokens;
+
 create policy "Users manage own FCM tokens"
 on public.fcm_tokens for all to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+-- 9. ENABLE REALTIME SUBSCRIPTIONS
+do $$
+begin
+  begin
+    alter publication supabase_realtime add table public.profiles;
+  exception when others then end;
+  begin
+    alter publication supabase_realtime add table public.connections;
+  exception when others then end;
+  begin
+    alter publication supabase_realtime add table public.messages;
+  exception when others then end;
+end;
+$$;
+
+-- 10. STORAGE BUCKET FOR PULSE IMAGES
+-- Create public bucket 'pulse-images' for status and DM photo sharing
+insert into storage.buckets (id, name, public)
+values ('pulse-images', 'pulse-images', true)
+on conflict (id) do nothing;
+
+drop policy if exists "Public Access pulse-images" on storage.objects;
+drop policy if exists "Authenticated upload pulse-images" on storage.objects;
+
+create policy "Public Access pulse-images"
+on storage.objects for select using (bucket_id = 'pulse-images');
+
+create policy "Authenticated upload pulse-images"
+on storage.objects for insert to authenticated
+with check (bucket_id = 'pulse-images');
