@@ -28,6 +28,11 @@ import {
   upsertPrivateStatus,
   fetchPrivateStatusesForMe,
   clearOutgoingPrivateStatuses,
+  startLocationShare,
+  updateLocationShare,
+  stopLocationShare,
+  fetchActiveLocationShares,
+  fetchMyActiveShares,
   client
 } from './supabase.js';
 
@@ -55,8 +60,11 @@ const state = {
   authMode: 'signin',
   clockInterval: null,
   pollInterval: null,
-  privateStatuses: {},    // received: keyed by from_user_id
-  privateSentByMe: {}     // sent: keyed by to_user_id
+  privateStatuses: {},
+  privateSentByMe: {},
+  locationInterval: null,      // GPS polling interval when sharing
+  sharingLocationWith: [],     // list of friendIds we're sharing with
+  friendLocations: {}          // friendId → { latitude, longitude, updatedAt }
 };
 
 let currentStatusImage = null;
@@ -208,6 +216,7 @@ async function checkNavigationState() {
       setTimeout(requestNotificationPermission, 3000);
       setTimeout(registerFCMToken, 4000);
       startHeartbeat();
+      resumeLocationSharing();
     } else {
       navigateTo('auth');
       setAuthMode('signin');
@@ -328,14 +337,24 @@ function setupRealtimeSync() {
         await loadDashboardData();
       }
     } else if (change.type === 'private_status_updated') {
-      // A friend sent us a private status update — refresh feed silently
       const rec = change.record;
       state.privateStatuses[rec.from_user_id] = rec;
       renderFriendsFeed();
-      // Find the friend's display name for the toast
       const friend = state.connections.find(c => c.friendId === rec.from_user_id);
       const name = friend?.nickname?.trim() || friend?.name || 'A friend';
       showToast(`${rec.status_emoji} ${name} sent you a private status!`);
+    } else if (change.type === 'location_updated') {
+      const rec = change.record;
+      if (rec && rec.is_active) {
+        state.friendLocations[rec.from_user_id] = {
+          latitude: rec.latitude,
+          longitude: rec.longitude,
+          updatedAt: rec.updated_at
+        };
+      } else if (rec) {
+        delete state.friendLocations[rec.from_user_id];
+      }
+      renderFriendLocations();
     }
   });
 }
@@ -374,9 +393,25 @@ async function loadDashboardData() {
       });
     }
 
+    // Load active location shares from friends
+    const locations = await fetchActiveLocationShares().catch(() => []);
+    locations.forEach(loc => {
+      state.friendLocations[loc.from_user_id] = {
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        updatedAt: loc.updated_at
+      };
+    });
+
+    // Load who I'm currently sharing with
+    const myShares = await fetchMyActiveShares().catch(() => []);
+    state.sharingLocationWith = myShares;
+    updateLocationIndicator();
+
     if (!cachedConns) setCachedConnections(connections);
     state.connections = connections;
     renderFriendsFeed();
+    renderFriendLocations();
     renderPendingInvites();
 
     const directSelect = document.getElementById('direct-friend-select');
@@ -1113,8 +1148,154 @@ function escapeHtml(str) {
 }
 
 /* ==========================================
-   FULL IMAGE VIEWER
+   LIVE LOCATION SHARING
    ========================================== */
+
+async function resumeLocationSharing() {
+  // Called on login — if user was sharing before, resume the GPS interval
+  try {
+    const activeShares = await fetchMyActiveShares();
+    if (!activeShares || activeShares.length === 0) return;
+
+    state.sharingLocationWith = activeShares;
+    updateLocationIndicator();
+    showToast('📍 Resuming location sharing.');
+
+    // Restart the GPS update interval
+    if (state.locationInterval) clearInterval(state.locationInterval);
+    state.locationInterval = setInterval(() => {
+      if (state.sharingLocationWith.length === 0) {
+        clearInterval(state.locationInterval);
+        state.locationInterval = null;
+        return;
+      }
+      navigator.geolocation?.getCurrentPosition(async (p) => {
+        await updateLocationShare(p.coords.latitude, p.coords.longitude);
+      }, () => {});
+    }, 15000);
+
+    // Send current position immediately
+    navigator.geolocation?.getCurrentPosition(async (p) => {
+      await updateLocationShare(p.coords.latitude, p.coords.longitude);
+    }, () => {});
+  } catch (e) {
+    // Location table doesn't exist yet or other error — ignore silently
+  }
+}
+
+async function startSharingLocation(friendIds) {
+  if (!navigator.geolocation) {
+    showToast('Location not supported on this device.', 'error');
+    return;
+  }
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude, longitude } = pos.coords;
+    try {
+      await startLocationShare(friendIds, latitude, longitude);
+      state.sharingLocationWith = friendIds;
+      showToast('📍 Location shared!');
+      updateLocationIndicator();
+
+      // Update every 15 seconds while sharing
+      if (state.locationInterval) clearInterval(state.locationInterval);
+      state.locationInterval = setInterval(() => {
+        if (state.sharingLocationWith.length === 0) {
+          clearInterval(state.locationInterval);
+          state.locationInterval = null;
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(async (p) => {
+          await updateLocationShare(p.coords.latitude, p.coords.longitude);
+        }, () => {});
+      }, 15000);
+    } catch (err) {
+      showToast(err.message || 'Failed to share location.', 'error');
+    }
+  }, (err) => {
+    if (err.code === 1) showToast('Location permission denied.', 'error');
+    else showToast('Could not get your location.', 'error');
+  }, { enableHighAccuracy: true, timeout: 10000 });
+}
+
+async function stopSharingLocation(friendIds = null) {
+  await stopLocationShare(friendIds);
+  if (friendIds) {
+    state.sharingLocationWith = state.sharingLocationWith.filter(id => !friendIds.includes(id));
+  } else {
+    state.sharingLocationWith = [];
+  }
+  if (state.sharingLocationWith.length === 0) {
+    clearInterval(state.locationInterval);
+    state.locationInterval = null;
+  }
+  updateLocationIndicator();
+  showToast('📍 Location sharing stopped.');
+}
+
+function updateLocationIndicator() {
+  const indicator = document.getElementById('location-share-indicator');
+  if (!indicator) return;
+  if (state.sharingLocationWith.length > 0) {
+    const names = state.sharingLocationWith.map(id => {
+      const c = state.connections.find(c => c.friendId === id);
+      return c?.nickname?.trim() || c?.name || id;
+    }).join(', ');
+    indicator.style.display = 'flex';
+    indicator.querySelector('.loc-names').textContent = names;
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+
+function openLocationModal() {
+  const connected = state.connections.filter(c => c.status === 'connected');
+  if (connected.length === 0) {
+    showToast('Connect with friends first to share your location.', 'error');
+    return;
+  }
+
+  const modal = document.getElementById('location-modal');
+  const list = document.getElementById('location-friend-list');
+  if (!modal || !list) return;
+
+  list.innerHTML = connected.map(friend => `
+    <label class="location-friend-option">
+      <input type="checkbox" class="location-friend-check" value="${escapeHtml(friend.friendId)}"
+        ${state.sharingLocationWith.includes(friend.friendId) ? 'checked' : ''}>
+      <span class="location-friend-avatar">${friend.statusEmoji || '😊'}</span>
+      <span class="location-friend-name">${escapeHtml(friend.nickname?.trim() || friend.name)}</span>
+      ${state.sharingLocationWith.includes(friend.friendId)
+        ? '<span class="loc-active-badge">📍 Active</span>' : ''}
+    </label>
+  `).join('');
+
+  modal.style.display = 'flex';
+}
+
+function renderFriendLocations() {
+  // Show a location pin on friend cards when they're sharing with us
+  state.connections.filter(c => c.status === 'connected').forEach(friend => {
+    const loc = state.friendLocations[friend.friendId];
+    const card = document.querySelector(`[data-friend-id="${friend.friendId}"]`);
+    if (!card) return;
+
+    let locEl = card.querySelector('.friend-location-pin');
+    if (loc) {
+      if (!locEl) {
+        locEl = document.createElement('a');
+        locEl.className = 'friend-location-pin';
+        locEl.target = '_blank';
+        locEl.rel = 'noopener noreferrer';
+        card.querySelector('.status-details')?.appendChild(locEl);
+      }
+      locEl.href = `https://www.google.com/maps?q=${loc.latitude},${loc.longitude}`;
+      locEl.innerHTML = `📍 <span>Live location · ${formatTimeAgo(loc.updatedAt)}</span>`;
+    } else if (locEl) {
+      locEl.remove();
+    }
+  });
+}
 function openFullImage(url) {
   if (!url) return;
   // Remove any existing viewer
@@ -1494,8 +1675,18 @@ function initEventListeners() {
 
     try {
       await signOutUser();
+      // Stop location sharing on sign out
+      if (state.sharingLocationWith.length > 0) {
+        await stopLocationShare(null).catch(() => {});
+      }
+      if (state.locationInterval) {
+        clearInterval(state.locationInterval);
+        state.locationInterval = null;
+      }
       state.userProfile = null;
       state.connections = [];
+      state.sharingLocationWith = [];
+      state.friendLocations = {};
       if (state.realtimeChannel) {
         state.realtimeChannel.unsubscribe();
         state.realtimeChannel = null;
@@ -1825,6 +2016,45 @@ function initEventListeners() {
     invalidateCache();
     navigateTo('config');
     showToast('Configuration reset.');
+  });
+
+  // Location sharing
+  document.getElementById('btn-location')?.addEventListener('click', () => {
+    openLocationModal();
+  });
+
+  document.getElementById('btn-close-location-modal')?.addEventListener('click', () => {
+    document.getElementById('location-modal').style.display = 'none';
+  });
+
+  document.getElementById('btn-start-location')?.addEventListener('click', async () => {
+    const modal = document.getElementById('location-modal');
+    const checked = [...document.querySelectorAll('.location-friend-check:checked')].map(c => c.value);
+    if (checked.length === 0) {
+      showToast('Select at least one friend.', 'error');
+      return;
+    }
+    modal.style.display = 'none';
+    await startSharingLocation(checked);
+  });
+
+  document.getElementById('btn-stop-selected-location')?.addEventListener('click', async () => {
+    const checked = [...document.querySelectorAll('.location-friend-check:checked')].map(c => c.value);
+    document.getElementById('location-modal').style.display = 'none';
+    await stopSharingLocation(checked.length > 0 ? checked : null);
+  });
+
+  document.getElementById('btn-stop-location')?.addEventListener('click', async () => {
+    await stopSharingLocation(null); // stop all
+  });
+
+  // Show/hide stop button based on selection in location modal
+  document.getElementById('location-friend-list')?.addEventListener('change', () => {
+    const anyChecked = document.querySelectorAll('.location-friend-check:checked').length > 0;
+    const anyActive = [...document.querySelectorAll('.location-friend-check:checked')]
+      .some(c => state.sharingLocationWith.includes(c.value));
+    document.getElementById('btn-stop-selected-location').style.display =
+      anyActive ? 'flex' : 'none';
   });
 }
 

@@ -375,3 +375,41 @@ where c.friend_name_snapshot is null
 -- ====================================================================
 update public.connections set friend_name_snapshot = null;
 -- ====================================================================
+
+-- ====================================================================
+-- LIVE LOCATION SHARING
+-- ====================================================================
+
+create table if not exists public.location_shares (
+  id           uuid default gen_random_uuid() primary key,
+  from_user_id uuid references public.profiles(id) on delete cascade not null,
+  to_user_id   uuid references public.profiles(id) on delete cascade not null,
+  latitude     double precision not null,
+  longitude    double precision not null,
+  is_active    boolean default true not null,
+  updated_at   timestamptz default now() not null,
+  unique (from_user_id, to_user_id)
+);
+
+alter table public.location_shares enable row level security;
+
+drop policy if exists "Sender manages own location shares" on public.location_shares;
+drop policy if exists "Recipient can view location shared with them" on public.location_shares;
+
+-- Sender can insert/update/delete their own shares
+create policy "Sender manages own location shares"
+on public.location_shares for all to authenticated
+using (auth.uid() = from_user_id)
+with check (auth.uid() = from_user_id);
+
+-- Recipient can only read active shares sent to them
+create policy "Recipient can view location shared with them"
+on public.location_shares for select to authenticated
+using (auth.uid() = to_user_id and is_active = true);
+
+-- Realtime so recipients get instant location updates
+do $$ begin
+  begin
+    alter publication supabase_realtime add table public.location_shares;
+  exception when others then end;
+end; $$;

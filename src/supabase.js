@@ -540,8 +540,86 @@ export async function removeConnection(connectionId) {
 }
 
 /* ==========================================
-   PRIVATE STATUSES (per-friend status overrides)
+   LIVE LOCATION SHARING
    ========================================== */
+
+export async function startLocationShare(toUserIds, latitude, longitude) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  // Upsert a row for each selected recipient
+  const rows = toUserIds.map(toId => ({
+    from_user_id: user.id,
+    to_user_id: toId,
+    latitude,
+    longitude,
+    is_active: true,
+    updated_at: new Date().toISOString()
+  }));
+
+  const { error } = await client()
+    .from('location_shares')
+    .upsert(rows, { onConflict: 'from_user_id,to_user_id' });
+
+  if (error) throw error;
+}
+
+export async function updateLocationShare(latitude, longitude) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return;
+
+  await client()
+    .from('location_shares')
+    .update({ latitude, longitude, updated_at: new Date().toISOString() })
+    .eq('from_user_id', user.id)
+    .eq('is_active', true);
+}
+
+export async function stopLocationShare(toUserIds = null) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return;
+
+  let query = client()
+    .from('location_shares')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('from_user_id', user.id);
+
+  if (toUserIds && toUserIds.length > 0) {
+    query = query.in('to_user_id', toUserIds);
+  }
+
+  await query;
+}
+
+export async function fetchActiveLocationShares() {
+  // Fetch locations being shared TO the current user (from friends)
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await client()
+    .from('location_shares')
+    .select('from_user_id, latitude, longitude, updated_at')
+    .eq('to_user_id', user.id)
+    .eq('is_active', true);
+
+  if (error) return [];
+  return data || [];
+}
+
+export async function fetchMyActiveShares() {
+  // Fetch who I'm currently sharing my location with
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await client()
+    .from('location_shares')
+    .select('to_user_id')
+    .eq('from_user_id', user.id)
+    .eq('is_active', true);
+
+  if (error) return [];
+  return (data || []).map(r => r.to_user_id);
+}
 
 export async function clearOutgoingPrivateStatuses() {
   const { data: { user } } = await client().auth.getUser();
@@ -759,6 +837,13 @@ export function subscribeToPulseSync(userId, callback) {
       { event: '*', schema: 'public', table: 'private_statuses', filter: `to_user_id=eq.${userId}` },
       (payload) => {
         callback({ type: 'private_status_updated', record: payload.new });
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'location_shares', filter: `to_user_id=eq.${userId}` },
+      (payload) => {
+        callback({ type: 'location_updated', record: payload.new });
       }
     )
     .subscribe((status) => {

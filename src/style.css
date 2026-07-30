@@ -1532,8 +1532,85 @@ body {
 }
 
 /* ==========================================
-   PRIVATE SENT PREVIEW (shown on sender's friend card)
+   LIVE LOCATION SHARING
    ========================================== */
+.location-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: 14px;
+  font-size: 13px;
+  color: #86efac;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.location-friend-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border-glow);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+}
+
+.location-friend-option:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.location-friend-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #22c55e;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.location-friend-avatar {
+  font-size: 20px;
+}
+
+.location-friend-name {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.loc-active-badge {
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(34, 197, 94, 0.15);
+  color: #86efac;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.friend-location-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #86efac;
+  text-decoration: none;
+  margin-top: 4px;
+  padding: 3px 8px;
+  background: rgba(34, 197, 94, 0.1);
+  border-radius: 8px;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  transition: var(--transition-smooth);
+}
+
+.friend-location-pin:hover {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
 .private-sent-preview {
   display: flex;
   align-items: center;
