@@ -103,8 +103,9 @@ function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
   // Check if app is visible — if so, skip the OS notification (in-app toast is enough)
   return self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     .then(clientList => {
-      const appVisible = clientList.some(c => !c.hidden);
-      if (appVisible) return; // app is open and focused — don't double-notify
+      // If any app window is visible and focused, skip OS notification — toast is enough
+      const appVisible = clientList.some(c => c.visibilityState === 'visible');
+      if (appVisible) return;
 
       return self.registration.showNotification(title, {
         body,

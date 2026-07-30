@@ -295,6 +295,13 @@ function setupRealtimeSync() {
           const emoji = change.record.status_emoji || '💫';
           const text = change.record.status_text || 'Updated their status';
 
+          // Skip if ONLY last_seen changed — that's just a heartbeat, not a real update
+          const prev = friend;
+          const emojiChanged = emoji !== (prev?.statusEmoji || '😊');
+          const textChanged = text !== (prev?.statusText || 'Available');
+          const imageChanged = change.record.status_image_url !== (prev?.statusImageUrl || null);
+          if (!emojiChanged && !textChanged && !imageChanged) return;
+
           // Dedup: only notify + reload once per friend per 5 seconds
           const dedupKey = `rt-${updatedId}`;
           const now = Date.now();
@@ -1258,13 +1265,18 @@ function requestNotificationPermission() {
     if (permission === 'granted') {
       showToast('Notifications enabled! 🔔');
       await subscribeToPushNotifications();
-      setTimeout(() => {
-        new Notification('Pulse is ready! 💫', {
-          body: "You'll be notified when friends update their status.",
-          icon: '/icon-192.png',
-          badge: '/notification-icon.png'
-        });
-      }, 500);
+      // Welcome notification via SW (not direct — avoids double-fire)
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        setTimeout(() => {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'FRIEND_STATUS_UPDATE',
+            friendName: 'Pulse',
+            emoji: '💫',
+            statusText: "You'll be notified when friends update their status.",
+            url: '/'
+          });
+        }, 600);
+      }
     }
   });
 
