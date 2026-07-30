@@ -164,75 +164,118 @@ function compressVideo(file, targetHeight = 480) {
       return reject(new Error('Only video files are allowed.'));
     }
 
-    // Max 120 seconds input
     const MAX_DURATION = 120;
-
+    const objectUrl = URL.createObjectURL(file);
     const video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
-    video.src = URL.createObjectURL(file);
+    video.preload = 'auto';
+    video.crossOrigin = 'anonymous';
 
-    video.onloadedmetadata = () => {
+    const cleanup = () => URL.revokeObjectURL(objectUrl);
+
+    video.addEventListener('error', (e) => {
+      cleanup();
+      // If we can't read/compress, upload the original file directly
+      console.warn('[Pulse] Video compression failed, uploading original:', e);
+      resolve(file);
+    });
+
+    video.addEventListener('loadedmetadata', () => {
       if (video.duration > MAX_DURATION) {
-        URL.revokeObjectURL(video.src);
+        cleanup();
         return reject(new Error(`Video too long. Max ${MAX_DURATION} seconds.`));
       }
 
-      // Scale to target height maintaining aspect ratio
-      const scale = targetHeight / video.videoHeight;
-      const w = Math.round(video.videoWidth * scale);
-      const h = targetHeight;
+      // If MediaRecorder not supported, upload original
+      if (typeof MediaRecorder === 'undefined') {
+        cleanup();
+        return resolve(file);
+      }
+
+      const origW = video.videoWidth  || 854;
+      const origH = video.videoHeight || 480;
+      const scale = Math.min(1, targetHeight / origH);
+      const w = Math.round(origW * scale);
+      const h = Math.round(origH * scale);
 
       const canvas = document.createElement('canvas');
       canvas.width  = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d');
 
-      // Pick best supported codec
       const mimeTypes = [
-        'video/mp4;codecs=avc1',
         'video/webm;codecs=vp9',
         'video/webm;codecs=vp8',
-        'video/webm'
+        'video/webm',
+        'video/mp4'
       ];
-      const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+      const mimeType = mimeTypes.find(m => {
+        try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
+      }) || 'video/webm';
+
+      let stream;
+      try {
+        stream = canvas.captureStream(24);
+      } catch (e) {
+        cleanup();
+        return resolve(file); // fallback: upload original
+      }
 
       const chunks = [];
-      const recorder = new MediaRecorder(canvas.captureStream(24), {
-        mimeType,
-        videoBitsPerSecond: 200000  // 200kbps → ~500KB for 15s
-      });
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, {
+          mimeType,
+          videoBitsPerSecond: 200000
+        });
+      } catch (e) {
+        cleanup();
+        return resolve(file);
+      }
 
-      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.ondataavailable = e => { if (e.data?.size > 0) chunks.push(e.data); };
       recorder.onstop = () => {
-        URL.revokeObjectURL(video.src);
+        cleanup();
         const blob = new Blob(chunks, { type: mimeType });
-        const ext  = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        resolve(new File([blob], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: mimeType }));
+        // If compression made it bigger somehow, use original
+        const result = blob.size < file.size ? blob : file;
+        const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        resolve(new File([result], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: mimeType }));
       };
-      recorder.onerror = (e) => reject(e.error || new Error('Video compression failed.'));
+      recorder.onerror = () => {
+        cleanup();
+        resolve(file); // fallback
+      };
 
       video.currentTime = 0;
       video.play().then(() => {
-        recorder.start(100); // collect chunks every 100ms
+        recorder.start(250);
 
-        const drawFrame = () => {
+        let animFrame;
+        const draw = () => {
           if (video.ended || video.paused) {
-            recorder.stop();
+            cancelAnimationFrame(animFrame);
+            if (recorder.state === 'recording') recorder.stop();
             return;
           }
-          ctx.drawImage(video, 0, 0, w, h);
-          requestAnimationFrame(drawFrame);
+          try { ctx.drawImage(video, 0, 0, w, h); } catch {}
+          animFrame = requestAnimationFrame(draw);
         };
-        requestAnimationFrame(drawFrame);
+        animFrame = requestAnimationFrame(draw);
 
         video.onended = () => {
-          if (recorder.state !== 'inactive') recorder.stop();
+          cancelAnimationFrame(animFrame);
+          if (recorder.state === 'recording') recorder.stop();
         };
-      }).catch(reject);
-    };
+      }).catch(() => {
+        cleanup();
+        resolve(file); // can't play — upload original
+      });
+    });
 
-    video.onerror = () => reject(new Error('Could not read video file.'));
+    video.src = objectUrl;
+    video.load();
   });
 }
 let toastTimer = null;
@@ -1051,39 +1094,39 @@ async function handleStatusMedia(file, fromFrontCamera = false) {
 async function handleStatusVideo(file) {
   if (!file) return;
   try {
-    showToast('Compressing video... this may take a moment ⏳', 'info');
+    showToast('Processing video... ⏳', 'info');
     const compressed = await compressVideo(file, 480);
     const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
-    currentStatusImage = compressed; // reuse same slot
+    const sizeKB = (compressed.size / 1024).toFixed(0);
+    const sizeLabel = compressed.size < 1024 * 1024 ? `${sizeKB}KB` : `${sizeMB}MB`;
+    currentStatusImage = compressed;
     isStatusImageRemoved = false;
     const preview = document.getElementById('status-image-preview');
-    const img = document.getElementById('status-preview-img');
-    // Show video preview
     if (preview) {
       preview.innerHTML = `
         <video src="${URL.createObjectURL(compressed)}" class="status-video-preview"
-          controls playsinline muted style="width:100%;border-radius:12px;max-height:200px;"></video>
+          controls playsinline muted style="width:100%;border-radius:12px;max-height:200px;display:block;"></video>
         <button id="status-remove-image" class="status-remove-img" type="button" title="Remove video">✕</button>
       `;
       preview.style.display = 'block';
-      // Re-attach remove listener
       preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
     }
-    showToast(`Video compressed to ${sizeMB}MB ✅`);
+    showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
-    showToast(err.message || 'Failed to compress video.', 'error');
+    showToast(err.message || 'Failed to process video.', 'error');
   }
 }
 
 async function handleChatVideo(file) {
   if (!file) return;
   try {
-    showToast('Compressing video... ⏳', 'info');
+    showToast('Processing video... ⏳', 'info');
     const compressed = await compressVideo(file, 480);
     const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
-    currentChatImage = compressed; // reuse same slot
+    const sizeKB = (compressed.size / 1024).toFixed(0);
+    const sizeLabel = compressed.size < 1024 * 1024 ? `${sizeKB}KB` : `${sizeMB}MB`;
+    currentChatImage = compressed;
     const preview = document.getElementById('chat-image-preview');
-    const img = document.getElementById('chat-preview-img');
     if (preview) {
       preview.innerHTML = `
         <video src="${URL.createObjectURL(compressed)}"
@@ -1094,9 +1137,9 @@ async function handleChatVideo(file) {
       preview.style.display = 'block';
       preview.querySelector('#chat-remove-image')?.addEventListener('click', removeChatImage);
     }
-    showToast(`Video ready (${sizeMB}MB) ✅`);
+    showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
-    showToast(err.message || 'Failed to compress video.', 'error');
+    showToast(err.message || 'Failed to process video.', 'error');
   }
 }
 
