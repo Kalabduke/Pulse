@@ -283,11 +283,11 @@
           <button id="chat-emoji-btn" class="chat-media-btn" title="Emoji">😊</button>
           <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200">
           <button id="chat-camera-btn" class="chat-media-btn" title="Camera">📷</button>
-          <button id="chat-file-btn" class="chat-media-btn" title="Photo">🖼️</button>
+          <button id="chat-file-btn" class="chat-media-btn" title="Photo/Video">🖼️</button>
           <button id="chat-send-btn" class="chat-send-btn">➤</button>
         </div>
-        <input type="file" id="chat-file-input" accept="image/*" style="display:none;">
-        <input type="file" id="chat-camera-input" accept="image/*" capture="environment" style="display:none;">
+        <input type="file" id="chat-file-input" accept="image/*,video/*" style="display:none;">
+        <input type="file" id="chat-camera-input" accept="image/*,video/*" capture="environment" style="display:none;">
       </div>
     </div>
 
@@ -348,11 +348,11 @@
               📷 Camera
             </button>
             <button type="button" id="status-file-btn" class="btn btn-secondary btn-small" style="font-size:13px; padding:10px 14px;">
-              🖼️ Gallery
+              🖼️ Photo/Video
             </button>
           </div>
-          <input type="file" id="status-camera-input" accept="image/*" capture="environment" style="display:none;">
-          <input type="file" id="status-file-input" accept="image/*" style="display:none;">
+          <input type="file" id="status-camera-input" accept="image/*,video/*" capture="environment" style="display:none;">
+          <input type="file" id="status-file-input" accept="image/*,video/*" style="display:none;">
 
           <!-- Recipient Selector -->
           <div class="recipient-selector">

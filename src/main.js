@@ -121,15 +121,11 @@ function startHeartbeat() {
    ========================================== */
 function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) {
   return new Promise((resolve, reject) => {
-    // Validate file type
-    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif'];
-    if (!allowed.includes(file.type) && !file.type.startsWith('image/')) {
+    // Validate file type — images only
+    if (!file.type.startsWith('image/')) {
       return reject(new Error('Only image files are allowed.'));
     }
-    // Validate file size — 10MB max before compression
-    if (file.size > 10 * 1024 * 1024) {
-      return reject(new Error('Image is too large. Max 10MB.'));
-    }
+    // No size limit — compress everything regardless of how large it is
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
@@ -158,8 +154,87 @@ function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) 
 }
 
 /* ==========================================
-   TOAST NOTIFICATIONS
+   VIDEO COMPRESSION
+   Re-encodes video through canvas at 480p/360p, ~200kbps
+   Target: ~500KB for 15s clip
    ========================================== */
+function compressVideo(file, targetHeight = 480) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('video/')) {
+      return reject(new Error('Only video files are allowed.'));
+    }
+
+    // Max 120 seconds input
+    const MAX_DURATION = 120;
+
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.src = URL.createObjectURL(file);
+
+    video.onloadedmetadata = () => {
+      if (video.duration > MAX_DURATION) {
+        URL.revokeObjectURL(video.src);
+        return reject(new Error(`Video too long. Max ${MAX_DURATION} seconds.`));
+      }
+
+      // Scale to target height maintaining aspect ratio
+      const scale = targetHeight / video.videoHeight;
+      const w = Math.round(video.videoWidth * scale);
+      const h = targetHeight;
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+
+      // Pick best supported codec
+      const mimeTypes = [
+        'video/mp4;codecs=avc1',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm'
+      ];
+      const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+      const chunks = [];
+      const recorder = new MediaRecorder(canvas.captureStream(24), {
+        mimeType,
+        videoBitsPerSecond: 200000  // 200kbps → ~500KB for 15s
+      });
+
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        URL.revokeObjectURL(video.src);
+        const blob = new Blob(chunks, { type: mimeType });
+        const ext  = mimeType.includes('mp4') ? 'mp4' : 'webm';
+        resolve(new File([blob], file.name.replace(/\.[^.]+$/, `.${ext}`), { type: mimeType }));
+      };
+      recorder.onerror = (e) => reject(e.error || new Error('Video compression failed.'));
+
+      video.currentTime = 0;
+      video.play().then(() => {
+        recorder.start(100); // collect chunks every 100ms
+
+        const drawFrame = () => {
+          if (video.ended || video.paused) {
+            recorder.stop();
+            return;
+          }
+          ctx.drawImage(video, 0, 0, w, h);
+          requestAnimationFrame(drawFrame);
+        };
+        requestAnimationFrame(drawFrame);
+
+        video.onended = () => {
+          if (recorder.state !== 'inactive') recorder.stop();
+        };
+      }).catch(reject);
+    };
+
+    video.onerror = () => reject(new Error('Could not read video file.'));
+  });
+}
 let toastTimer = null;
 
 function showToast(text, type = 'success') {
@@ -636,8 +711,11 @@ function renderFriendsFeed() {
          </div>`
       : '';
 
+    const isVideo = displayImage && (displayImage.includes('.mp4') || displayImage.includes('.webm'));
     const avatarInner = hasImage
-      ? `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
+      ? isVideo
+        ? `<video src="${escapeHtml(displayImage)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" autoplay loop muted playsinline></video>`
+        : `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
       : `<span>${escapeHtml(displayEmoji || '😊')}</span>`;
 
     card.innerHTML = `
@@ -881,11 +959,17 @@ async function loadChatMessages(friendId) {
     container.innerHTML = messages.map(msg => {
       const isSent = msg.sender_id === myId;
       const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const isVideo = msg.image_url && (msg.image_url.includes('.mp4') || msg.image_url.includes('.webm') || msg.image_url.includes('video'));
+      const mediaHtml = msg.image_url
+        ? isVideo
+          ? `<video src="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;" controls playsinline preload="metadata"></video>`
+          : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
+        : '';
 
       return `
         <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
           ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
-          ${msg.image_url ? `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="window.open('${escapeHtml(msg.image_url)}', '_blank')">` : ''}
+          ${mediaHtml}
           <span class="chat-bubble-time">${time}</span>
         </div>
       `;
@@ -955,6 +1039,67 @@ async function handleChatImage(file, fromFrontCamera = false) {
 /* ==========================================
    STATUS IMAGE HANDLERS
    ========================================== */
+async function handleStatusMedia(file, fromFrontCamera = false) {
+  if (!file) return;
+  if (file.type.startsWith('video/')) {
+    await handleStatusVideo(file);
+  } else {
+    await handleStatusImage(file, fromFrontCamera);
+  }
+}
+
+async function handleStatusVideo(file) {
+  if (!file) return;
+  try {
+    showToast('Compressing video... this may take a moment ⏳', 'info');
+    const compressed = await compressVideo(file, 480);
+    const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
+    currentStatusImage = compressed; // reuse same slot
+    isStatusImageRemoved = false;
+    const preview = document.getElementById('status-image-preview');
+    const img = document.getElementById('status-preview-img');
+    // Show video preview
+    if (preview) {
+      preview.innerHTML = `
+        <video src="${URL.createObjectURL(compressed)}" class="status-video-preview"
+          controls playsinline muted style="width:100%;border-radius:12px;max-height:200px;"></video>
+        <button id="status-remove-image" class="status-remove-img" type="button" title="Remove video">✕</button>
+      `;
+      preview.style.display = 'block';
+      // Re-attach remove listener
+      preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
+    }
+    showToast(`Video compressed to ${sizeMB}MB ✅`);
+  } catch (err) {
+    showToast(err.message || 'Failed to compress video.', 'error');
+  }
+}
+
+async function handleChatVideo(file) {
+  if (!file) return;
+  try {
+    showToast('Compressing video... ⏳', 'info');
+    const compressed = await compressVideo(file, 480);
+    const sizeMB = (compressed.size / 1024 / 1024).toFixed(1);
+    currentChatImage = compressed; // reuse same slot
+    const preview = document.getElementById('chat-image-preview');
+    const img = document.getElementById('chat-preview-img');
+    if (preview) {
+      preview.innerHTML = `
+        <video src="${URL.createObjectURL(compressed)}"
+          style="height:80px;border-radius:10px;border:1px solid var(--border-glow);"
+          playsinline muted autoplay loop></video>
+        <button id="chat-remove-image" class="chat-remove-img">×</button>
+      `;
+      preview.style.display = 'block';
+      preview.querySelector('#chat-remove-image')?.addEventListener('click', removeChatImage);
+    }
+    showToast(`Video ready (${sizeMB}MB) ✅`);
+  } catch (err) {
+    showToast(err.message || 'Failed to compress video.', 'error');
+  }
+}
+
 async function handleStatusImage(file, fromFrontCamera = false) {
   if (!file) return;
 
@@ -1852,11 +1997,11 @@ function initEventListeners() {
   });
 
   document.getElementById('status-file-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleStatusImage(e.target.files[0], false);
+    if (e.target.files?.[0]) handleStatusMedia(e.target.files[0], false);
   });
 
   document.getElementById('status-camera-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleStatusImage(e.target.files[0], false);
+    if (e.target.files?.[0]) handleStatusMedia(e.target.files[0], false);
   });
 
   document.getElementById('status-remove-image')?.addEventListener('click', () => {
@@ -2009,11 +2154,17 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-file-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleChatImage(e.target.files[0], false);
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type.startsWith('video/')) handleChatVideo(f);
+    else handleChatImage(f, false);
   });
 
   document.getElementById('chat-camera-input')?.addEventListener('change', (e) => {
-    if (e.target.files?.[0]) handleChatImage(e.target.files[0], false);
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.type.startsWith('video/')) handleChatVideo(f);
+    else handleChatImage(f, false);
   });
 
   document.getElementById('chat-remove-image')?.addEventListener('click', () => {
