@@ -751,22 +751,26 @@ body {
   position: absolute;
   top: 8px;
   right: 8px;
-  width: 28px;
-  height: 28px;
-  border-radius: 14px;
-  background: rgba(239, 68, 68, 0.9);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.95);
   color: white;
-  border: none;
+  border: 2px solid rgba(255,255,255,0.3);
   font-size: 16px;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  z-index: 2;
 }
 
 .status-remove-img:hover {
-  transform: scale(1.1);
+  transform: scale(1.15);
+  background: #ef4444;
 }
 
 .image-picker-row {

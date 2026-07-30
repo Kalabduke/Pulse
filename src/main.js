@@ -303,6 +303,15 @@ function setupRealtimeSync() {
         invalidateCache();
         await loadDashboardData();
       }
+    } else if (change.type === 'private_status_updated') {
+      // A friend sent us a private status update — refresh feed silently
+      const rec = change.record;
+      state.privateStatuses[rec.from_user_id] = rec;
+      renderFriendsFeed();
+      // Find the friend's display name for the toast
+      const friend = state.connections.find(c => c.friendId === rec.from_user_id);
+      const name = friend?.nickname?.trim() || friend?.name || 'A friend';
+      showToast(`${rec.status_emoji} ${name} sent you a private status!`);
     }
   });
 }
@@ -540,7 +549,7 @@ function renderFriendsFeed() {
       : '';
 
     const avatarInner = hasImage
-      ? `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;" onclick="event.stopPropagation();openFullImage('${escapeHtml(displayImage)}')">`
+      ? `<img src="${escapeHtml(displayImage)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;">`
       : `<span>${displayEmoji || '😊'}</span>`;
 
     card.innerHTML = `
@@ -569,6 +578,12 @@ function renderFriendsFeed() {
   container.querySelectorAll('.user-status-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('.btn')) return;
+      // If clicking the avatar that has a photo, open the image viewer
+      const avatarEl = e.target.closest('.avatar-container.has-photo');
+      if (avatarEl) {
+        const img = avatarEl.querySelector('img');
+        if (img) { openFullImage(img.src); return; }
+      }
       const friendId = card.dataset.friendId;
       const friend = state.connections.find(c => c.friendId === friendId);
       if (friend) openChat(friend);
@@ -850,6 +865,26 @@ async function handleChatImage(file, fromFrontCamera = false) {
    ========================================== */
 async function handleStatusImage(file, fromFrontCamera = false) {
   if (!file) return;
+
+  // If an emoji (non-default) is already selected, ask user to remove it first
+  // We only block if the emoji was intentionally picked (not the default)
+  const emojiPreview = document.getElementById('emoji-preview');
+  const currentEmoji = emojiPreview?.textContent?.trim();
+  const isDefaultEmoji = !currentEmoji || currentEmoji === '😊';
+
+  if (!isDefaultEmoji) {
+    const confirmed = await showConfirmModal({
+      icon: '🖼️',
+      title: 'Replace emoji with photo?',
+      body: 'You have an emoji selected. Using a photo will replace it as your status visual.',
+      okLabel: 'Use Photo',
+      okDanger: false
+    });
+    if (!confirmed) return;
+    // Reset emoji to default
+    selectEmoji('😊');
+  }
+
   try {
     showToast('Processing image...');
     const compressed = await compressImage(file, 1200, 0.8, fromFrontCamera);
@@ -859,6 +894,8 @@ async function handleStatusImage(file, fromFrontCamera = false) {
     const img = document.getElementById('status-preview-img');
     if (img) img.src = URL.createObjectURL(compressed);
     if (preview) preview.style.display = 'block';
+    // Disable emoji grid visually when photo is active
+    _setEmojiPickerDisabled(true);
   } catch (err) {
     showToast('Failed to process image', 'error');
   }
@@ -876,6 +913,31 @@ function removeStatusImage() {
   const camInput = document.getElementById('status-camera-input');
   if (fileInput) fileInput.value = '';
   if (camInput) camInput.value = '';
+  // Re-enable emoji picker
+  _setEmojiPickerDisabled(false);
+}
+
+function _setEmojiPickerDisabled(disabled) {
+  const grid = document.getElementById('emoji-grid');
+  const tabs = document.getElementById('emoji-category-tabs');
+  const customInput = document.getElementById('emoji-custom-input');
+  const overlay = document.getElementById('emoji-picker-overlay');
+
+  if (disabled) {
+    if (grid) grid.style.opacity = '0.3';
+    if (grid) grid.style.pointerEvents = 'none';
+    if (tabs) tabs.style.opacity = '0.3';
+    if (tabs) tabs.style.pointerEvents = 'none';
+    if (customInput) customInput.disabled = true;
+    if (overlay) overlay.style.display = 'flex';
+  } else {
+    if (grid) grid.style.opacity = '';
+    if (grid) grid.style.pointerEvents = '';
+    if (tabs) tabs.style.opacity = '';
+    if (tabs) tabs.style.pointerEvents = '';
+    if (customInput) customInput.disabled = false;
+    if (overlay) overlay.style.display = 'none';
+  }
 }
 
 /* ==========================================
@@ -1388,6 +1450,13 @@ function initEventListeners() {
     if (radioAll) radioAll.checked = true;
     const directSelect = document.getElementById('direct-friend-select');
     if (directSelect) directSelect.style.display = 'none';
+
+    // Always re-enable emoji picker on modal open
+    _setEmojiPickerDisabled(false);
+    // If user already has an image set, disable emoji picker
+    if (state.userProfile?.status_image_url && !isStatusImageRemoved) {
+      _setEmojiPickerDisabled(true);
+    }
 
     if (modal) modal.style.display = 'flex';
   });

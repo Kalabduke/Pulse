@@ -307,7 +307,13 @@
               <button class="emoji-cat-tab" data-cat="food">🍕 Food</button>
               <button class="emoji-cat-tab" data-cat="travel">✈️ Travel</button>
             </div>
-            <div class="emoji-grid" id="emoji-grid"></div>
+            <div style="position:relative;">
+              <div class="emoji-grid" id="emoji-grid"></div>
+              <div id="emoji-picker-overlay" style="display:none;position:absolute;inset:0;background:rgba(14,11,26,0.7);border-radius:16px;align-items:center;justify-content:center;flex-direction:column;gap:8px;text-align:center;padding:12px;">
+                <span style="font-size:22px;">🖼️</span>
+                <span style="font-size:12px;color:hsl(var(--text-secondary));line-height:1.4;">Photo selected.<br>Remove it to pick an emoji.</span>
+              </div>
+            </div>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 6px;">
@@ -319,7 +325,7 @@
           <!-- Image Preview Area -->
           <div id="status-image-preview" class="status-image-preview" style="display:none;">
             <img id="status-preview-img" src="" alt="Preview">
-            <button id="status-remove-image" class="status-remove-img" type="button">×</button>
+            <button id="status-remove-image" class="status-remove-img" type="button" title="Remove photo">✕</button>
           </div>
 
           <!-- Image Pickers -->

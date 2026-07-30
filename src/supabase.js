@@ -500,6 +500,20 @@ export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null
     .single();
 
   if (error) throw error;
+
+  // Also log to status_history so it appears in recipient's history feed
+  client()
+    .from('status_history')
+    .insert({
+      user_id: user.id,
+      status_emoji: emoji,
+      status_text: text,
+      status_image_url: imageUrl
+    })
+    .then(({ error: histErr }) => {
+      if (histErr) console.warn('[Pulse] Private status history log failed:', histErr.message);
+    });
+
   return data;
 }
 
