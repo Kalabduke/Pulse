@@ -47,13 +47,16 @@ body {
 
 #app-root {
   width: 100%;
-  max-width: 480px;
+  max-width: 600px;
   min-height: 100vh;
+  margin: 0 auto;
   position: relative;
-  background: rgba(9, 5, 20, 0.6);
-  box-shadow: 0 0 60px rgba(0, 0, 0, 0.8);
-  border-left: 1px solid var(--border-subtle);
-  border-right: 1px solid var(--border-subtle);
+  background: rgba(14, 11, 26, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 0 80px rgba(0, 0, 0, 0.9), 0 0 40px rgba(99, 102, 241, 0.15);
+  border-left: 1px solid var(--border-glow);
+  border-right: 1px solid var(--border-glow);
 }
 
 /* ==========================================
@@ -133,9 +136,11 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0 20px 0;
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-glow);
+  border-radius: 20px;
+  margin-bottom: 24px;
 }
 
 .logo-container {

@@ -57,6 +57,7 @@ const state = {
 
 let currentStatusImage = null;
 let currentStatusImageUrl = null;
+let isStatusImageRemoved = false;
 let currentChatImage = null;
 let currentChatFriend = null;
 
@@ -806,6 +807,7 @@ async function handleStatusImage(file) {
     showToast('Compressing image...');
     const compressed = await compressImage(file);
     currentStatusImage = compressed;
+    isStatusImageRemoved = false;
     const preview = document.getElementById('status-image-preview');
     const img = document.getElementById('status-preview-img');
     if (img) img.src = URL.createObjectURL(compressed);
@@ -818,6 +820,7 @@ async function handleStatusImage(file) {
 function removeStatusImage() {
   currentStatusImage = null;
   currentStatusImageUrl = null;
+  isStatusImageRemoved = true;
   const preview = document.getElementById('status-image-preview');
   const img = document.getElementById('status-preview-img');
   if (preview) preview.style.display = 'none';
@@ -1259,6 +1262,17 @@ function initEventListeners() {
     const modal = document.getElementById('status-modal');
     const nameInput = document.getElementById('status-name-input');
     if (nameInput) nameInput.value = state.userProfile?.name || '';
+    
+    isStatusImageRemoved = false;
+    currentStatusImage = null;
+    if (state.userProfile?.status_image_url) {
+      const preview = document.getElementById('status-image-preview');
+      const img = document.getElementById('status-preview-img');
+      if (img) img.src = state.userProfile.status_image_url;
+      if (preview) preview.style.display = 'block';
+    } else {
+      removeStatusImage();
+    }
     if (modal) modal.style.display = 'flex';
   });
 
@@ -1275,19 +1289,22 @@ function initEventListeners() {
     const text = textInput?.value.trim() || '';
 
     try {
-      let imageUrl = state.userProfile.status_image_url || null;
+      let imageUrl = null;
 
       if (currentStatusImage) {
         showToast('Uploading image...');
         imageUrl = await uploadStatusImage(currentStatusImage);
         currentStatusImageUrl = imageUrl;
+      } else if (isStatusImageRemoved) {
+        imageUrl = null;
+      } else {
+        imageUrl = state.userProfile?.status_image_url || null;
       }
 
       await updateStatus(name, state.selectedEmoji, text, imageUrl);
       showToast('Status updated! 💫');
       if (textInput) textInput.value = '';
 
-      removeStatusImage();
       document.getElementById('status-modal').style.display = 'none';
       await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
       await loadDashboardData();

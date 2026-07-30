@@ -291,52 +291,92 @@ export async function fetchConnections() {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  const { data, error } = await client()
+  let data = null;
+
+  // Try fetching with explicit foreign key hints first
+  const res1 = await client()
     .from('connections')
     .select(`
       id,
       status,
       nickname,
       created_at,
+      user_id,
+      friend_id,
       sender:profiles!connections_user_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen),
       receiver:profiles!connections_friend_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen)
     `)
     .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
-  if (error) throw error;
+  if (!res1.error && res1.data) {
+    data = res1.data;
+  } else {
+    // Fallback without explicit constraint names
+    const res2 = await client()
+      .from('connections')
+      .select('id, status, nickname, created_at, user_id, friend_id')
+      .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
-  const friendIds = data.map(conn => {
-    const isSender = conn.sender?.id === user.id;
-    return isSender ? conn.receiver?.id : conn.sender?.id;
+    if (res2.error) throw res2.error;
+
+    const conns = res2.data || [];
+    const profileIds = [...new Set(conns.flatMap(c => [c.user_id, c.friend_id]))].filter(Boolean);
+
+    let profilesMap = {};
+    if (profileIds.length > 0) {
+      const { data: profs } = await client()
+        .from('profiles')
+        .select('id, name, status_emoji, status_text, status_image_url, updated_at, last_seen')
+        .in('id', profileIds);
+
+      if (profs) {
+        profs.forEach(p => { profilesMap[p.id] = p; });
+      }
+    }
+
+    data = conns.map(c => ({
+      ...c,
+      sender: profilesMap[c.user_id],
+      receiver: profilesMap[c.friend_id]
+    }));
+  }
+
+  const friendIds = (data || []).map(conn => {
+    const isSender = conn.sender?.id === user.id || conn.user_id === user.id;
+    return isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
   }).filter(Boolean);
 
   const unreadCounts = {};
   if (friendIds.length > 0) {
-    const { data: unreadData, error: unreadErr } = await client()
-      .from('messages')
-      .select('sender_id, count')
-      .eq('recipient_id', user.id)
-      .is('read_at', null)
-      .in('sender_id', friendIds)
-      .group('sender_id');
+    try {
+      const { data: unreadData } = await client()
+        .from('messages')
+        .select('sender_id')
+        .eq('recipient_id', user.id)
+        .is('read_at', null)
+        .in('sender_id', friendIds);
 
-    if (!unreadErr && unreadData) {
-      unreadData.forEach(row => {
-        unreadCounts[row.sender_id] = parseInt(row.count);
-      });
+      if (unreadData) {
+        unreadData.forEach(row => {
+          unreadCounts[row.sender_id] = (unreadCounts[row.sender_id] || 0) + 1;
+        });
+      }
+    } catch (e) {
+      console.warn('[Pulse] Unread count query notice:', e.message);
     }
   }
 
-  return data.map(conn => {
-    const isSender = conn.sender?.id === user.id;
+  return (data || []).map(conn => {
+    const isSender = conn.sender?.id === user.id || conn.user_id === user.id;
     const friend = isSender ? conn.receiver : conn.sender;
+    const friendId = isSender ? (conn.receiver?.id || conn.friend_id) : (conn.sender?.id || conn.user_id);
 
     return {
       connectionId: conn.id,
       status: conn.status,
       isOutgoing: isSender,
       nickname: conn.nickname || null,
-      friendId: friend?.id,
+      friendId,
       name: friend?.name || 'Unknown',
       displayName: conn.nickname?.trim() || friend?.name || 'Unknown',
       statusEmoji: friend?.status_emoji || '😊',
@@ -344,7 +384,7 @@ export async function fetchConnections() {
       statusImageUrl: friend?.status_image_url || null,
       updatedAt: friend?.updated_at,
       lastSeen: friend?.last_seen,
-      unreadCount: unreadCounts[friend?.id] || 0
+      unreadCount: unreadCounts[friendId] || 0
     };
   });
 }
@@ -369,21 +409,19 @@ export async function sendConnectionRequest(friendIdOrName) {
   let friendProfile = null;
 
   if (uuidRegex.test(query)) {
-    const { data, error } = await client()
+    const { data } = await client()
       .from('profiles')
       .select('id, name')
       .eq('id', query)
-      .maybeSingle();
-    if (error) throw error;
-    friendProfile = data;
+      .limit(1);
+    if (data && data.length > 0) friendProfile = data[0];
   } else {
-    const { data, error } = await client()
+    const { data } = await client()
       .from('profiles')
       .select('id, name')
-      .ilike('name', query)
-      .maybeSingle();
-    if (error) throw error;
-    friendProfile = data;
+      .ilike('name', `%${query}%`)
+      .limit(1);
+    if (data && data.length > 0) friendProfile = data[0];
   }
 
   if (!friendProfile) {
