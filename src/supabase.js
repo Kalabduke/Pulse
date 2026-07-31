@@ -4,6 +4,8 @@ function safeLocalGet(key) {
   try { return localStorage.getItem(key); } catch { return null; }
 }
 
+let supabase = null;
+
 const SUPABASE_URL = safeLocalGet('pulse_supabase_url')
   || import.meta.env.VITE_SUPABASE_URL
   || 'https://hrbophzmwuhmzyibjuge.supabase.co';
