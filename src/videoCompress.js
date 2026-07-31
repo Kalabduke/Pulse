@@ -1,17 +1,15 @@
 /**
  * Client-side video compression using MediaRecorder + canvas
- * No WASM — works on all browsers, no memory crashes.
  *
- * Files < 1.2MB: pass through as-is
- * Files ≥ 1.2MB: re-encode at 360p/300kbps → ~375KB for 10s
- * Hard cap: 10 seconds
+ * All videos: attempt re-encode at 360p/300kbps → target ~400KB for 10s
+ * If browser can't decode (MOV/HEVC on some browsers): reject with clear message
+ * Hard cap: 10 seconds (longer clips trimmed)
  */
 
-const COMPRESS_THRESHOLD = 1.2 * 1024 * 1024; // 1.2MB
-const MAX_DURATION_S     = 10;
-const TARGET_HEIGHT      = 360;   // 360p for small output
-const VIDEO_BITRATE      = 300000; // 300kbps → ~375KB for 10s
-const AUDIO_BITRATE      = 48000;  // 48kbps audio
+const MAX_DURATION_S = 10;
+const TARGET_HEIGHT  = 360;
+const VIDEO_BITRATE  = 300000; // 300kbps
+const AUDIO_BITRATE  = 48000;  // 48kbps
 
 export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   if (!file?.type?.startsWith('video/')) {
@@ -20,14 +18,10 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
 
   onProgress(5);
 
-  // Small enough — pass through, no re-encoding needed
-  if (file.size < COMPRESS_THRESHOLD) {
-    console.log(`[Pulse] Video ${(file.size/1024).toFixed(0)}KB < 1.2MB, skipping compression`);
-    onProgress(100);
-    return file;
-  }
+  const sizeMB = file.size / 1024 / 1024;
+  console.log(`[Pulse] Video input: ${sizeMB.toFixed(2)}MB, type: ${file.type}`);
 
-  console.log(`[Pulse] Compressing ${(file.size/1024/1024).toFixed(2)}MB video...`);
+  // Always try to compress — even small files benefit from trimming to 10s
   return reencodeVideo(file, onProgress);
 }
 
@@ -37,47 +31,57 @@ function reencodeVideo(file, onProgress) {
     const video       = document.createElement('video');
     video.muted       = true;
     video.playsInline = true;
-    video.preload     = 'auto';
-    video.src         = objectUrl;
-    video.load();
+    video.preload     = 'metadata';
 
     onProgress(8);
 
-    video.addEventListener('error', () => {
+    // Timeout: if video doesn't load metadata in 15s, reject
+    const loadTimeout = setTimeout(() => {
       URL.revokeObjectURL(objectUrl);
-      // Can't re-encode — return original with a warning toast
-      console.warn('[Pulse] Cannot re-encode video, using original');
-      resolve(file);
+      reject(new Error("Can't process this video format. Please convert to MP4 first."));
+    }, 15000);
+
+    video.addEventListener('error', () => {
+      clearTimeout(loadTimeout);
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Can't read this video. Please use MP4 format."));
     });
 
     video.addEventListener('loadedmetadata', () => {
+      clearTimeout(loadTimeout);
+
       const origW    = video.videoWidth  || 640;
       const origH    = video.videoHeight || 480;
       const maxDim   = Math.max(origW, origH);
       const scale    = maxDim > TARGET_HEIGHT ? TARGET_HEIGHT / maxDim : 1;
-      const w        = Math.round(origW * scale / 2) * 2;
-      const h        = Math.round(origH * scale / 2) * 2;
+      const w        = Math.round(origW * scale / 2) * 2 || 640;
+      const h        = Math.round(origH * scale / 2) * 2 || 360;
       const duration = Math.min(video.duration || MAX_DURATION_S, MAX_DURATION_S);
 
       onProgress(12);
+      console.log(`[Pulse] Encoding ${w}x${h}, ${duration.toFixed(1)}s`);
 
       const canvas = document.createElement('canvas');
       canvas.width  = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d', { alpha: false });
 
-      // Pick best supported MIME type
       const mimes = [
         'video/webm;codecs=vp9,opus',
         'video/webm;codecs=vp8,opus',
         'video/webm;codecs=vp9',
         'video/webm;codecs=vp8',
         'video/webm',
-        'video/mp4'
       ];
       const mime = mimes.find(m => {
         try { return MediaRecorder.isTypeSupported(m); } catch { return false; }
-      }) || 'video/webm';
+      });
+
+      if (!mime) {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Video compression not supported on this browser. Please use Chrome or Firefox."));
+        return;
+      }
 
       let stream, recorder;
       try {
@@ -89,8 +93,7 @@ function reencodeVideo(file, onProgress) {
         });
       } catch (e) {
         URL.revokeObjectURL(objectUrl);
-        console.warn('[Pulse] MediaRecorder unavailable:', e.message);
-        resolve(file); // fallback to original
+        reject(new Error(`Can't compress video: ${e.message}`));
         return;
       }
 
@@ -101,54 +104,62 @@ function reencodeVideo(file, onProgress) {
         URL.revokeObjectURL(objectUrl);
         const blob = new Blob(chunks, { type: mime });
 
-        // If re-encoding made it bigger (rare), use original
-        if (blob.size >= file.size) {
-          console.log('[Pulse] Re-encoded was larger, using original');
-          resolve(file);
+        if (blob.size === 0) {
+          reject(new Error("Video compression produced empty output. Please try a different video."));
           return;
         }
 
-        const ext = mime.includes('mp4') ? 'mp4' : 'webm';
         const out = new File(
           [blob],
-          file.name.replace(/\.[^.]+$/, `.${ext}`),
+          file.name.replace(/\.[^.]+$/, '.webm'),
           { type: mime }
         );
         const inKB  = (file.size / 1024).toFixed(0);
         const outKB = (out.size  / 1024).toFixed(0);
         console.log(`[Pulse] Video: ${inKB}KB → ${outKB}KB`);
+        onProgress(100);
         resolve(out);
       };
 
-      recorder.onerror = () => {
+      recorder.onerror = (e) => {
         URL.revokeObjectURL(objectUrl);
-        resolve(file); // fallback to original on error
+        reject(new Error(`Recording failed: ${e.error?.message || 'unknown error'}`));
       };
 
-      let raf;
-      const draw = () => {
-        if (video.currentTime >= duration) {
-          cancelAnimationFrame(raf);
-          if (recorder.state === 'recording') recorder.stop();
-          return;
-        }
-        try { ctx.drawImage(video, 0, 0, w, h); } catch {}
-        const pct = Math.min(98, Math.round(12 + (video.currentTime / duration) * 86));
-        onProgress(pct);
-        raf = requestAnimationFrame(draw);
-      };
-
+      // Play video and draw frames to canvas
       video.play().then(() => {
         recorder.start(200);
+        let raf;
+
+        const draw = () => {
+          if (video.currentTime >= duration) {
+            cancelAnimationFrame(raf);
+            if (recorder.state === 'recording') recorder.stop();
+            return;
+          }
+          try { ctx.drawImage(video, 0, 0, w, h); } catch {}
+          const pct = Math.min(98, Math.round(12 + (video.currentTime / duration) * 86));
+          onProgress(pct);
+          raf = requestAnimationFrame(draw);
+        };
+
         raf = requestAnimationFrame(draw);
+
         video.onended = () => {
           cancelAnimationFrame(raf);
           if (recorder.state === 'recording') recorder.stop();
         };
-      }).catch(() => {
+
+      }).catch((e) => {
         URL.revokeObjectURL(objectUrl);
-        resolve(file); // can't play, use original
+        // video.play() failed — likely unsupported codec (MOV/HEVC)
+        reject(new Error("Can't play this video format in browser. Please use MP4."));
       });
+
+      // Also set src now so it starts loading
+      video.src = objectUrl;
     });
+
+    video.src = objectUrl;
   });
 }
