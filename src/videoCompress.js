@@ -1,35 +1,52 @@
 /**
- * Video compression — optimized for Vercel + Capacitor Android
- * Targets: 360p–480p stories, ~1–3MB per 15–30s clip
- *
- * Core files served from /public (committed to git, deployed by Vercel):
- *   /ffmpeg-core.js   — ffmpeg wasm bootstrap
- *   /ffmpeg-core.wasm — the actual WASM binary (~8MB, cached after first load)
+ * Video compression using ffmpeg.wasm
+ * Loads core files directly as ArrayBuffer — avoids toBlobURL path issues.
  */
 
 let ffmpegInstance = null;
 let loadPromise    = null;
+
+async function fetchAsBlob(url, mimeType) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
+  const buf  = await res.arrayBuffer();
+  return new Blob([buf], { type: mimeType });
+}
 
 async function getFFmpeg(onProgress) {
   if (ffmpegInstance) return ffmpegInstance;
   if (loadPromise)    return loadPromise;
 
   loadPromise = (async () => {
-    onProgress?.(2);
+    onProgress?.(3);
 
-    const { FFmpeg }    = await import('@ffmpeg/ffmpeg');
-    const { toBlobURL } = await import('@ffmpeg/util');
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    onProgress?.(7);
 
     const ff = new FFmpeg();
     ff.on('log', ({ message }) => console.log('[FFmpeg]', message));
 
-    await ff.load({
-      coreURL: await toBlobURL('/ffmpeg-core.js',   'text/javascript'),
-      wasmURL: await toBlobURL('/ffmpeg-core.wasm', 'application/wasm'),
-    });
+    onProgress?.(10);
 
+    // Fetch both files ourselves so we control the blob URLs
+    const [coreBlob, wasmBlob] = await Promise.all([
+      fetchAsBlob('/ffmpeg-core.js',   'text/javascript'),
+      fetchAsBlob('/ffmpeg-core.wasm', 'application/wasm'),
+    ]);
+
+    onProgress?.(14);
+
+    const coreURL = URL.createObjectURL(coreBlob);
+    const wasmURL = URL.createObjectURL(wasmBlob);
+
+    await ff.load({ coreURL, wasmURL });
+
+    // Revoke after load — ffmpeg has already read them
+    URL.revokeObjectURL(coreURL);
+    URL.revokeObjectURL(wasmURL);
+
+    onProgress?.(20);
     ffmpegInstance = ff;
-    onProgress?.(12);
     return ff;
   })();
 
@@ -42,25 +59,17 @@ async function getFFmpeg(onProgress) {
   }
 }
 
-/**
- * Compress video for story-style upload.
- * @param {File}     file
- * @param {Function} onProgress — 0 to 100
- * @returns {Promise<File>}
- */
 export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   if (!file?.type?.startsWith('video/')) {
     throw new Error('Only video files are allowed.');
   }
-
-  // Reject massive files before touching WASM
   if (file.size > 150 * 1024 * 1024) {
-    throw new Error('Video too large. Please pick a file under 150MB.');
+    throw new Error('Video too large. Max 150MB.');
   }
 
   const ff = await getFFmpeg(onProgress).catch(err => {
     console.error('[Pulse] FFmpeg load failed:', err);
-    throw new Error(`Video compressor failed to load: ${err.message || err}. Please try again.`);
+    throw new Error(`Can't upload video right now. Please try again. (${err.message})`);
   });
 
   const { fetchFile } = await import('@ffmpeg/util');
@@ -70,67 +79,47 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   const inputName  = `in_${ts}.${ext}`;
   const outputName = `out_${ts}.mp4`;
 
-  // Progress: 12% (loaded) → 95% (encoding done)
   const progressHandler = ({ progress }) => {
-    onProgress(Math.min(95, Math.round(12 + progress * 83)));
+    onProgress(Math.min(95, Math.round(20 + progress * 75)));
   };
   ff.on('progress', progressHandler);
 
-  // ── Encoding settings ─────────────────────────────────────────────────────
-  // Portrait 9:16 → 480×854. Landscape → 854×480.
-  // Smart scale: makes the LARGER dimension = targetSize
-  const targetSize   = 480;
-  const videoBitrate = '1000k';   // ~1 Mbps — crisp at 480p, ~2MB for 15s
-  const maxRate      = '1200k';
-  const bufSize      = '2400k';
-  const audioBitrate = '64k';
-
-  // If height >= width (portrait), scale width to targetSize; else scale height
-  const scaleFilter =
-    `scale='if(gte(ih,iw),${targetSize},-2)':'if(gte(ih,iw),-2,${targetSize})',format=yuv420p`;
-
   try {
     await ff.writeFile(inputName, await fetchFile(file));
-    onProgress(15);
+    onProgress(22);
+
+    // Smart scale: larger dimension → 480, handles both portrait and landscape
+    const scaleFilter =
+      `scale='if(gte(ih,iw),480,-2)':'if(gte(ih,iw),-2,480)',format=yuv420p`;
 
     await ff.exec([
       '-i',        inputName,
       '-vf',       scaleFilter,
       '-c:v',      'libx264',
       '-preset',   'ultrafast',
-      '-b:v',      videoBitrate,
-      '-maxrate',  maxRate,
-      '-bufsize',  bufSize,
+      '-b:v',      '1000k',
+      '-maxrate',  '1200k',
+      '-bufsize',  '2400k',
       '-c:a',      'aac',
-      '-b:a',      audioBitrate,
+      '-b:a',      '64k',
       '-ar',       '44100',
       '-ac',       '2',
       '-movflags', '+faststart',
-      '-t',        '60',          // hard cap at 60s
+      '-t',        '60',
       '-y',
       outputName
     ]);
 
     onProgress(96);
-
     const data = await ff.readFile(outputName);
-
-    // Cleanup WASM virtual FS
     await ff.deleteFile(inputName).catch(() => {});
     await ff.deleteFile(outputName).catch(() => {});
     ff.off('progress', progressHandler);
 
     const blob       = new Blob([data], { type: 'video/mp4' });
-    const compressed = new File(
-      [blob],
-      file.name.replace(/\.[^.]+$/, '.mp4'),
-      { type: 'video/mp4' }
-    );
+    const compressed = new File([blob], file.name.replace(/\.[^.]+$/, '.mp4'), { type: 'video/mp4' });
 
-    const before = (file.size      / 1024 / 1024).toFixed(2);
-    const after  = (compressed.size / 1024 / 1024).toFixed(2);
-    console.log(`[Pulse] Video: ${before}MB → ${after}MB`);
-
+    console.log(`[Pulse] ${(file.size/1024/1024).toFixed(2)}MB → ${(compressed.size/1024/1024).toFixed(2)}MB`);
     onProgress(100);
     return compressed;
 
@@ -139,6 +128,6 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
     await ff.deleteFile(outputName).catch(() => {});
     ff.off('progress', progressHandler);
     console.error('[Pulse] FFmpeg exec error:', err);
-    throw new Error("Couldn't compress this video. It may be an unsupported format.");
+    throw new Error("Can't upload video right now. Please try again.");
   }
 }
