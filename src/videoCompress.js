@@ -12,16 +12,26 @@ const VIDEO_BITRATE  = 300000; // 300kbps
 const AUDIO_BITRATE  = 48000;  // 48kbps
 
 export async function compressVideoFFmpeg(file, onProgress = () => {}) {
-  if (!file?.type?.startsWith('video/')) {
+  if (!file?.type?.startsWith('video/') && !file.name.match(/\.(mp4|webm|mov|avi|mkv|m4v)$/i)) {
     throw new Error('Only video files are allowed.');
   }
 
   onProgress(5);
 
-  const sizeMB = file.size / 1024 / 1024;
-  console.log(`[Pulse] Video input: ${sizeMB.toFixed(2)}MB, type: ${file.type}`);
+  // MOV and other non-web formats: server handles these
+  // Client-side only works reliably for MP4/WebM
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const clientSupported = ['mp4', 'webm', 'm4v'].includes(ext) ||
+    file.type === 'video/mp4' || file.type === 'video/webm';
 
-  // Always try to compress — even small files benefit from trimming to 10s
+  if (!clientSupported) {
+    // Server will handle it — just return file as-is for now
+    // uploadStatusImage in supabase.js will call the Edge Function
+    onProgress(100);
+    return file;
+  }
+
+  console.log(`[Pulse] Client compressing ${(file.size/1024/1024).toFixed(2)}MB...`);
   return reencodeVideo(file, onProgress);
 }
 
