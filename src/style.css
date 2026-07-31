@@ -603,7 +603,7 @@ body {
   z-index: 1000;
   align-items: flex-start;
   justify-content: center;
-  padding: 16px;
+  padding: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
@@ -611,16 +611,13 @@ body {
 .modal-content {
   background: #171328;
   border: 1px solid var(--border-glow);
-  border-radius: 28px;
-  padding: 20px 18px;
-  width: 100%;
+  border-radius: 20px;
+  padding: 18px 16px;
+  width: calc(100% - 24px);
   max-width: 440px;
-  max-height: 88vh;
-  overflow-y: auto;
-  overflow-x: hidden;
+  margin: 12px auto;
   box-shadow: var(--shadow-glass);
   animation: slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
 }
 
