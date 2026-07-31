@@ -21,7 +21,7 @@ async function getFFmpeg(onProgress) {
     const { toBlobURL } = await import('@ffmpeg/util');
 
     const ff = new FFmpeg();
-    // ff.on('log', ({ message }) => console.log('[FFmpeg]', message));
+    ff.on('log', ({ message }) => console.log('[FFmpeg]', message));
 
     await ff.load({
       coreURL: await toBlobURL('/ffmpeg-core.js',   'text/javascript'),
@@ -60,7 +60,7 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
 
   const ff = await getFFmpeg(onProgress).catch(err => {
     console.error('[Pulse] FFmpeg load failed:', err);
-    throw new Error("Video compressor isn't ready. Please try again.");
+    throw new Error(`Video compressor failed to load: ${err.message || err}. Please try again.`);
   });
 
   const { fetchFile } = await import('@ffmpeg/util');

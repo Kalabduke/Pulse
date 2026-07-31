@@ -1,6 +1,8 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/ffmpeg-core.js",   "destination": "/ffmpeg-core.js" },
+    { "source": "/ffmpeg-core.wasm", "destination": "/ffmpeg-core.wasm" },
+    { "source": "/(.*)",             "destination": "/index.html" }
   ],
   "headers": [
     {
