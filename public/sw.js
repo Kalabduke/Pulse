@@ -6,7 +6,9 @@ const SHELL_ASSETS = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
-  '/notification-icon.png'
+  '/notification-icon.png',
+  '/ffmpeg-core.js',
+  '/ffmpeg-core.wasm'
 ];
 
 // ==========================================

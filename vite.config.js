@@ -7,12 +7,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: false,  // never expose source maps in production
+    sourcemap: false,
+    assetsInlineLimit: 0,
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
-      input: {
-        main: 'index.html'
-      }
+      input: { main: 'index.html' }
     }
+  },
+  optimizeDeps: {
+    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
   },
   define: {
     // Bake credentials into the build — safe for client-side (protected by RLS)
