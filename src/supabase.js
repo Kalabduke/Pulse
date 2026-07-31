@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-let supabase = null;
+const SUPABASE_URL = localStorage.getItem('pulse_supabase_url')
+  || import.meta.env.VITE_SUPABASE_URL
+  || 'https://hrbophzmwuhmzylbjuge.supabase.co';
 
 export function initSupabase(url = null, anonKey = null) {
   const configUrl = url
@@ -185,7 +187,9 @@ export async function uploadStatusImage(file) {
   const fileName = `${user.id}/${Date.now()}.${fileExt}`;
   const filePath = `statuses/${fileName}`;
 
-  // Always set explicit content type so browser plays video correctly
+  const isVideo = file.type.startsWith('video/');
+
+  // Always set explicit content type
   const contentType = file.type || (
     fileExt === 'mp4'  ? 'video/mp4'  :
     fileExt === 'webm' ? 'video/webm' :
@@ -205,6 +209,31 @@ export async function uploadStatusImage(file) {
     });
 
   if (uploadError) throw uploadError;
+
+  // For videos: call Edge Function to compress server-side
+  if (isVideo) {
+    try {
+      const session = await client().auth.getSession();
+      const token   = session.data.session?.access_token;
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/compress-video`, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ inputPath: filePath })
+      });
+
+      if (res.ok) {
+        const { url } = await res.json();
+        if (url) return url;
+      }
+    } catch (e) {
+      console.warn('[Pulse] Server compression failed, using original:', e.message);
+    }
+    // Fallback: return original URL if edge function fails
+  }
 
   const { data: { publicUrl } } = client()
     .storage
