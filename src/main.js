@@ -1636,7 +1636,6 @@ async function registerFCMToken() {
     PushNotifications.addListener('registration', async (token) => {
       console.log('[Pulse] FCM token:', token.value);
       try {
-        const { saveFcmToken } = await import('./supabase.js');
         await saveFcmToken(token.value);
         console.log('[Pulse] FCM token saved');
       } catch (e) {
