@@ -678,18 +678,9 @@ export async function upsertPrivateStatus(toUserId, emoji, text, imageUrl = null
 
   if (error) throw error;
 
-  // Log to status_history — awaited so we know it worked
-  // The recipient can read this via RLS because they are a connected friend
-  const { error: histErr } = await client()
-    .from('status_history')
-    .insert({
-      user_id: user.id,
-      status_emoji: emoji,
-      status_text: text || '',
-      status_image_url: imageUrl
-    });
-
-  if (histErr) console.warn('[Pulse] Private status history log failed:', histErr.message);
+  // Do NOT log private statuses to status_history —
+  // history is visible to ALL connected friends, which would leak the private status
+  // The recipient sees it on their friend card with the 🔒 Private badge instead
 
   return data;
 }
