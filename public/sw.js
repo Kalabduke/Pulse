@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulse-v6';
+const CACHE_NAME = 'pulse-v7';
 
 const SHELL_ASSETS = [
   '/',
@@ -10,7 +10,7 @@ const SHELL_ASSETS = [
 ];
 
 // ==========================================
-// INSTALL
+// INSTALL — cache shell, skip waiting immediately
 // ==========================================
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -18,12 +18,12 @@ self.addEventListener('install', (event) => {
       .then(cache => Promise.allSettled(
         SHELL_ASSETS.map(url => cache.add(url).catch(() => {}))
       ))
-      .then(() => self.skipWaiting())
+      .then(() => self.skipWaiting())  // take over immediately, don't wait
   );
 });
 
 // ==========================================
-// ACTIVATE
+// ACTIVATE — delete ALL old caches immediately
 // ==========================================
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -32,6 +32,12 @@ self.addEventListener('activate', (event) => {
         names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
       ))
       .then(() => self.clients.claim())
+      .then(() => {
+        // Tell all open tabs to reload so they get the new bundle
+        self.clients.matchAll({ type: 'window' }).then(clients => {
+          clients.forEach(client => client.navigate(client.url));
+        });
+      })
   );
 });
 
