@@ -1016,24 +1016,39 @@ async function handleStatusVideo(file) {
       _updateVideoProgress(progressEl, pct);
     });
     _hideVideoProgress(progressEl);
-    const sizeLabel = _sizeLabel(compressed.size);
-    currentStatusImage = compressed;
-    isStatusImageRemoved = false;
-    const preview = document.getElementById('status-image-preview');
-    if (preview) {
-      preview.innerHTML = `
-        <video src="${URL.createObjectURL(compressed)}"
-          controls playsinline muted
-          style="width:100%;border-radius:12px;max-height:200px;display:block;"></video>
-        <button id="status-remove-image" class="status-remove-img" type="button" title="Remove">✕</button>
-      `;
-      preview.style.display = 'block';
-      preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
+
+    // If Cloudinary returned a URL, use it directly
+    if (compressed._cloudinaryUrl) {
+      currentStatusImage = compressed;
+      currentStatusImage._cloudinaryUrl = compressed._cloudinaryUrl;
+      isStatusImageRemoved = false;
+
+      const preview = document.getElementById('status-image-preview');
+      if (preview) {
+        preview.innerHTML = `
+          <video src="${compressed._cloudinaryUrl}"
+            controls playsinline muted
+            style="width:100%;border-radius:12px;max-height:200px;display:block;"></video>
+          <button id="status-remove-image" class="status-remove-img" type="button" title="Remove">✕</button>
+        `;
+        preview.style.display = 'block';
+        preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
+      }
+      showToast('Video ready ✅');
+    } else {
+      // Fallback: normal image-style processing
+      currentStatusImage = compressed;
+      isStatusImageRemoved = false;
+      const preview = document.getElementById('status-image-preview');
+      const img = document.getElementById('status-preview-img');
+      if (img) img.src = URL.createObjectURL(compressed);
+      if (preview) preview.style.display = 'block';
+      const sizeLabel = _sizeLabel(compressed.size);
+      showToast(`Video ready (${sizeLabel}) ✅`);
     }
-    showToast(`Video ready (${sizeLabel}) ✅`);
   } catch (err) {
     _hideVideoProgress(progressEl);
-    showToast(err.message || 'Video compression failed.', 'error');
+    showToast(err.message || 'Video upload failed.', 'error');
   }
 }
 
@@ -1045,12 +1060,14 @@ async function handleChatVideo(file) {
       _updateVideoProgress(progressEl, pct);
     });
     _hideVideoProgress(progressEl);
-    const sizeLabel = _sizeLabel(compressed.size);
+
+    const videoUrl = compressed._cloudinaryUrl || URL.createObjectURL(compressed);
     currentChatImage = compressed;
+
     const preview = document.getElementById('chat-image-preview');
     if (preview) {
       preview.innerHTML = `
-        <video src="${URL.createObjectURL(compressed)}"
+        <video src="${videoUrl}"
           style="height:80px;border-radius:10px;border:1px solid var(--border-glow);"
           playsinline muted autoplay loop></video>
         <button id="chat-remove-image" class="chat-remove-img">×</button>
@@ -1058,10 +1075,10 @@ async function handleChatVideo(file) {
       preview.style.display = 'block';
       preview.querySelector('#chat-remove-image')?.addEventListener('click', removeChatImage);
     }
-    showToast(`Video ready (${sizeLabel}) ✅`);
+    showToast('Video ready ✅');
   } catch (err) {
     _hideVideoProgress(progressEl);
-    showToast(err.message || 'Video compression failed.', 'error');
+    showToast(err.message || 'Video upload failed.', 'error');
   }
 }
 

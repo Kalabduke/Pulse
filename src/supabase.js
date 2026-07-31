@@ -189,14 +189,19 @@ export async function uploadStatusImage(file) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
+  // If file was processed by Cloudinary, the URL is already set — use it directly
+  if (file._cloudinaryUrl) {
+    console.log('[Pulse] Using Cloudinary URL:', file._cloudinaryUrl);
+    return file._cloudinaryUrl;
+  }
+
   const fileExt = file.name.split('.').pop().toLowerCase();
   const fileName = `${user.id}/${Date.now()}.${fileExt}`;
   const filePath = `statuses/${fileName}`;
 
-  const isVideo = file.type.startsWith('video/') || 
+  const isVideo = file.type.startsWith('video/') ||
     ['mov', 'mp4', 'webm', 'avi', 'mkv', 'm4v', '3gp'].includes(fileExt);
 
-  // Always set explicit content type
   const contentType = file.type ||
     (fileExt === 'mp4'  ? 'video/mp4'  :
      fileExt === 'webm' ? 'video/webm' :
@@ -204,43 +209,6 @@ export async function uploadStatusImage(file) {
      fileExt === 'jpg' || fileExt === 'jpeg' ? 'image/jpeg' :
      fileExt === 'png'  ? 'image/png'  :
      'application/octet-stream');
-
-  // For videos: try server-side compression first (accepts any format → MP4)
-  if (isVideo) {
-    try {
-      const session = await client().auth.getSession();
-      const token   = session.data.session?.access_token;
-
-      const form = new FormData();
-      form.append('video', file, file.name);
-
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/compress-video`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: form
-      });
-
-      if (res.ok && res.headers.get('content-type')?.includes('video/mp4')) {
-        const compressedBlob = await res.blob();
-        const compressedFile = new File([compressedBlob], file.name.replace(/\.[^.]+$/, '.mp4'), { type: 'video/mp4' });
-        const inKB  = (file.size / 1024).toFixed(0);
-        const outKB = res.headers.get('X-Output-KB') || (compressedBlob.size / 1024).toFixed(0);
-        console.log(`[Pulse] Server compressed: ${inKB}KB → ${outKB}KB`);
-
-        // Upload the compressed MP4
-        const compressedPath = `statuses/${user.id}/${Date.now()}.mp4`;
-        const { error: upErr } = await client().storage.from('pulse-images')
-          .upload(compressedPath, compressedFile, { contentType: 'video/mp4', upsert: false });
-
-        if (!upErr) {
-          const { data: { publicUrl } } = client().storage.from('pulse-images').getPublicUrl(compressedPath);
-          return publicUrl;
-        }
-      }
-    } catch (e) {
-      console.warn('[Pulse] Server compression failed, falling back:', e.message);
-    }
-  }
 
   const { error: uploadError } = await client()
     .storage
