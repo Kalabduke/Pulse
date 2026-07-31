@@ -1,17 +1,10 @@
 /**
- * Video compression using ffmpeg.wasm
- * Loads core files directly as ArrayBuffer — avoids toBlobURL path issues.
+ * Video compression using ffmpeg.wasm 0.12
+ * Passes WASM binary directly as Uint8Array — no blob URL path issues.
  */
 
 let ffmpegInstance = null;
 let loadPromise    = null;
-
-async function fetchAsBlob(url, mimeType) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  const buf  = await res.arrayBuffer();
-  return new Blob([buf], { type: mimeType });
-}
 
 async function getFFmpeg(onProgress) {
   if (ffmpegInstance) return ffmpegInstance;
@@ -23,29 +16,38 @@ async function getFFmpeg(onProgress) {
     const { FFmpeg } = await import('@ffmpeg/ffmpeg');
     onProgress?.(7);
 
+    // Fetch both files
+    const [jsRes, wasmRes] = await Promise.all([
+      fetch('/ffmpeg-core.js'),
+      fetch('/ffmpeg-core.wasm'),
+    ]);
+
+    if (!jsRes.ok)   throw new Error(`ffmpeg-core.js fetch failed: ${jsRes.status}`);
+    if (!wasmRes.ok) throw new Error(`ffmpeg-core.wasm fetch failed: ${wasmRes.status}`);
+
+    onProgress?.(13);
+
+    const jsText    = await jsRes.text();
+    const wasmBytes = await wasmRes.arrayBuffer();
+
+    onProgress?.(17);
+
+    // Create blob URL for JS — needed so ff.load() can eval it
+    const jsBlob  = new Blob([jsText], { type: 'text/javascript' });
+    const coreURL = URL.createObjectURL(jsBlob);
+
     const ff = new FFmpeg();
     ff.on('log', ({ message }) => console.log('[FFmpeg]', message));
 
-    onProgress?.(10);
+    // Pass WASM as Uint8Array directly — bypasses the relative path resolution
+    await ff.load({
+      coreURL,
+      wasmURL:  new Uint8Array(wasmBytes),
+    });
 
-    // Fetch both files ourselves so we control the blob URLs
-    const [coreBlob, wasmBlob] = await Promise.all([
-      fetchAsBlob('/ffmpeg-core.js',   'text/javascript'),
-      fetchAsBlob('/ffmpeg-core.wasm', 'application/wasm'),
-    ]);
-
-    onProgress?.(14);
-
-    const coreURL = URL.createObjectURL(coreBlob);
-    const wasmURL = URL.createObjectURL(wasmBlob);
-
-    await ff.load({ coreURL, wasmURL });
-
-    // Revoke after load — ffmpeg has already read them
     URL.revokeObjectURL(coreURL);
-    URL.revokeObjectURL(wasmURL);
 
-    onProgress?.(20);
+    onProgress?.(22);
     ffmpegInstance = ff;
     return ff;
   })();
@@ -69,7 +71,8 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
 
   const ff = await getFFmpeg(onProgress).catch(err => {
     console.error('[Pulse] FFmpeg load failed:', err);
-    throw new Error(`Can't upload video right now. Please try again. (${err.message})`);
+    const msg = err?.message || String(err) || 'unknown error';
+    throw new Error(`Can't upload video right now (${msg}). Please try again.`);
   });
 
   const { fetchFile } = await import('@ffmpeg/util');
@@ -80,15 +83,14 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   const outputName = `out_${ts}.mp4`;
 
   const progressHandler = ({ progress }) => {
-    onProgress(Math.min(95, Math.round(20 + progress * 75)));
+    onProgress(Math.min(95, Math.round(22 + progress * 73)));
   };
   ff.on('progress', progressHandler);
 
   try {
     await ff.writeFile(inputName, await fetchFile(file));
-    onProgress(22);
+    onProgress(24);
 
-    // Smart scale: larger dimension → 480, handles both portrait and landscape
     const scaleFilter =
       `scale='if(gte(ih,iw),480,-2)':'if(gte(ih,iw),-2,480)',format=yuv420p`;
 
