@@ -1096,10 +1096,8 @@ function _updateVideoProgress(el, pct) {
   if (fill)  fill.style.width = `${pct}%`;
   if (pctEl) pctEl.textContent = `${pct}%`;
   if (label) {
-    if (pct < 25)       label.textContent = 'Loading compressor...';
-    else if (pct < 85)  label.textContent = 'Downloading video engine... (first time only)';
-    else if (pct < 90)  label.textContent = 'Initialising...';
-    else                label.textContent = 'Compressing video...';
+    if (pct < 20)  label.textContent = 'Preparing...';
+    else           label.textContent = 'Compressing video...';
   }
 }
 

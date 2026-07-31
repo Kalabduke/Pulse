@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulse-v3';
+const CACHE_NAME = 'pulse-v4';
 
 const SHELL_ASSETS = [
   '/',
@@ -6,9 +6,7 @@ const SHELL_ASSETS = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
-  '/notification-icon.png',
-  '/ffmpeg-core.js',
-  '/ffmpeg-core.wasm'
+  '/notification-icon.png'
 ];
 
 // ==========================================
