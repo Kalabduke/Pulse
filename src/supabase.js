@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = localStorage.getItem('pulse_supabase_url')
+function safeLocalGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+
+const SUPABASE_URL = safeLocalGet('pulse_supabase_url')
   || import.meta.env.VITE_SUPABASE_URL
   || 'https://hrbophzmwuhmzyibjuge.supabase.co';
 
