@@ -1077,7 +1077,7 @@ function _showVideoProgress() {
   el.innerHTML = `
     <div class="video-progress-box">
       <div style="font-size:24px;margin-bottom:10px;">🎬</div>
-      <div style="font-size:14px;font-weight:600;margin-bottom:12px;">Compressing video...</div>
+      <div id="vp-label" style="font-size:14px;font-weight:600;margin-bottom:12px;">Preparing compressor...</div>
       <div class="video-progress-bar-track">
         <div class="video-progress-bar-fill" id="vp-fill" style="width:0%"></div>
       </div>
@@ -1090,10 +1090,17 @@ function _showVideoProgress() {
 
 function _updateVideoProgress(el, pct) {
   if (!el) return;
-  const fill = el.querySelector('#vp-fill');
-  const label = el.querySelector('#vp-pct');
-  if (fill) fill.style.width = `${pct}%`;
-  if (label) label.textContent = `${pct}%`;
+  const fill  = el.querySelector('#vp-fill');
+  const label = el.querySelector('#vp-label');
+  const pctEl = el.querySelector('#vp-pct');
+  if (fill)  fill.style.width = `${pct}%`;
+  if (pctEl) pctEl.textContent = `${pct}%`;
+  if (label) {
+    if (pct < 25)       label.textContent = 'Loading compressor...';
+    else if (pct < 85)  label.textContent = 'Downloading video engine... (first time only)';
+    else if (pct < 90)  label.textContent = 'Initialising...';
+    else                label.textContent = 'Compressing video...';
+  }
 }
 
 function _hideVideoProgress(el) {
