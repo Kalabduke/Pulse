@@ -41,12 +41,11 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   const uploadURL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/video/upload`;
 
   const form = new FormData();
-  form.append('file',         file);
+  form.append('file',          file);
   form.append('upload_preset', CLOUDINARY_PRESET);
-  form.append('folder',       'pulse');
-  // Request eager transformation so the compressed version is ready immediately
-  form.append('eager',        TRANSFORM);
-  form.append('eager_async',  'false');
+  form.append('folder',        'pulse');
+  // Note: unsigned presets don't allow eager transformations
+  // We apply transformations via the delivery URL after upload
 
   onProgress(10);
 
@@ -89,22 +88,13 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
 
   onProgress(90);
 
-  // Use the eager transformation URL if available, otherwise build it from public_id
-  let deliveryUrl;
-  if (result.eager?.[0]?.secure_url) {
-    deliveryUrl = result.eager[0].secure_url;
-  } else {
-    // Build transformation URL from public_id
-    const publicId = result.public_id;
-    deliveryUrl = `https://res.cloudinary.com/${CLOUDINARY_CLOUD}/video/upload/${TRANSFORM}/${publicId}.mp4`;
-  }
+  // Always build transformation URL from public_id
+  // Unsigned presets don't support eager transformations
+  const publicId   = result.public_id;
+  const deliveryUrl = `https://res.cloudinary.com/${CLOUDINARY_CLOUD}/video/upload/${TRANSFORM}/${publicId}.mp4`;
 
-  const inMB  = (file.size / 1024 / 1024).toFixed(2);
-  const outKB = result.eager?.[0]?.bytes
-    ? (result.eager[0].bytes / 1024).toFixed(0) + 'KB'
-    : 'processing';
-
-  console.log(`[Pulse] Cloudinary: ${inMB}MB → ${outKB} | ${deliveryUrl}`);
+  const inMB = (file.size / 1024 / 1024).toFixed(2);
+  console.log(`[Pulse] Cloudinary uploaded: ${inMB}MB | URL: ${deliveryUrl}`);
 
   onProgress(100);
 
