@@ -20,7 +20,7 @@ export default defineConfig({
   define: {
     // Bake credentials into the build — safe for client-side (protected by RLS)
     'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(
-      process.env.VITE_SUPABASE_URL || 'https://hrbophzmwuhmzylbjuge.supabase.co'
+      process.env.VITE_SUPABASE_URL || 'https://hrbophzmwuhmzyibjuge.supabase.co'
     ),
     'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(
       process.env.VITE_SUPABASE_ANON_KEY || ''

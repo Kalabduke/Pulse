@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = localStorage.getItem('pulse_supabase_url')
   || import.meta.env.VITE_SUPABASE_URL
-  || 'https://hrbophzmwuhmzylbjuge.supabase.co';
+  || 'https://hrbophzmwuhmzyibjuge.supabase.co';
 
 export function initSupabase(url = null, anonKey = null) {
   const configUrl = url
