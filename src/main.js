@@ -2162,10 +2162,15 @@ function initEventListeners() {
 
   document.getElementById('status-camera-btn')?.addEventListener('click', () => {
     openCamera(
-      (file) => handleStatusImage(file, false),
+      (file) => {
+        if (file.type.startsWith('video/')) {
+          handleStatusVideo(file);
+        } else {
+          handleStatusImage(file, false);
+        }
+      },
       (reason) => {
         if (reason === 'no_camera') {
-          // No camera on this device — fall back to file picker
           document.getElementById('status-file-input')?.click();
         }
       }
@@ -2332,7 +2337,13 @@ function initEventListeners() {
 
   document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
     openCamera(
-      (file) => handleChatImage(file, false),
+      (file) => {
+        if (file.type.startsWith('video/')) {
+          handleChatVideo(file);
+        } else {
+          handleChatImage(file, false);
+        }
+      },
       (reason) => {
         if (reason === 'no_camera') {
           document.getElementById('chat-file-input')?.click();
