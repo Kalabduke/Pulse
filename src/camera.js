@@ -115,18 +115,31 @@ export function openCamera(onCapture, onError) {
       } catch (e) {
         console.warn('[Camera] Constraint failed:', e.name, e.message);
         lastErr = e;
+        // Only stop trying on hard failures
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') break;
         if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+          // Truly no camera — fall back to gallery
           closeCamera(); onError?.('no_camera'); return;
         }
+        // For other errors (OverconstrainedError etc) keep trying next constraint
       }
     }
 
     if (!_stream) {
-      // All getUserMedia attempts failed — close overlay and fall back to OS native camera
-      console.warn('[Camera] All getUserMedia failed, falling back to file input');
-      closeCamera();
-      onError?.('no_camera');
+      const errName = lastErr?.name || '';
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+        // Show instructions — don't fall back (user needs to grant permission)
+        statusEl.textContent = '📷 Camera access denied.\n\nTap the 🔒 lock icon in your address bar → Camera → Allow, then tap Cancel and try again.';
+      } else {
+        // Unknown error — show it but also offer gallery fallback
+        statusEl.innerHTML = `Camera unavailable (${lastErr?.message || 'unknown'}).<br><br>
+          <button onclick="document.getElementById('pulse-camera-overlay').remove()"
+            style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 20px;
+              border-radius:20px;cursor:pointer;font-size:14px;margin-top:8px;">
+            Use Gallery instead
+          </button>`;
+        setTimeout(() => { closeCamera(); onError?.('no_camera'); }, 8000);
+      }
       return;
     }
     try {
