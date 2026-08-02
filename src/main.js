@@ -1,5 +1,6 @@
 import './style.css';
 import { compressVideoFFmpeg } from './videoCompress.js';
+import { openCamera } from './camera.js';
 import {
   initSupabase,
   isSupabaseConfigured,
@@ -2160,7 +2161,15 @@ function initEventListeners() {
   });
 
   document.getElementById('status-camera-btn')?.addEventListener('click', () => {
-    document.getElementById('status-camera-input')?.click();
+    openCamera(
+      (file) => handleStatusImage(file, false),
+      (reason) => {
+        if (reason === 'no_camera') {
+          // No camera on this device — fall back to file picker
+          document.getElementById('status-file-input')?.click();
+        }
+      }
+    );
   });
 
   document.getElementById('status-file-btn')?.addEventListener('click', () => {
@@ -2322,7 +2331,14 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
-    document.getElementById('chat-camera-input')?.click();
+    openCamera(
+      (file) => handleChatImage(file, false),
+      (reason) => {
+        if (reason === 'no_camera') {
+          document.getElementById('chat-file-input')?.click();
+        }
+      }
+    );
   });
 
   document.getElementById('chat-file-btn')?.addEventListener('click', () => {
