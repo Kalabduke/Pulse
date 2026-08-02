@@ -88,25 +88,37 @@ export function openCamera(onCapture, onError) {
   const startStream = async (facing) => {
     if (_stream) _stream.getTracks().forEach(t => t.stop());
     status.style.display = 'block';
-    status.textContent = 'Starting camera...';
+    status.textContent = 'Requesting camera access...';
     try {
       _stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: true
       });
       video.srcObject = _stream;
       video.onloadedmetadata = () => {
         video.play();
         status.style.display = 'none';
-        // Mirror the preview for front camera — looks natural like a mirror
-        video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+        video.style.transform = 'none';
       };
     } catch (err) {
-      if (err.name === 'NotAllowedError') {
-        status.textContent = 'Camera permission denied. Please allow camera access.';
-      } else if (err.name === 'NotFoundError') {
+      console.warn('[Camera]', err.name, err.message);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        status.textContent = '📷 Camera access denied.\nGo to browser settings → allow camera for this site.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         closeCamera();
         onError?.('no_camera');
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        status.textContent = 'Camera is in use by another app. Close it and try again.';
+      } else if (err.name === 'OverconstrainedError') {
+        // Retry without facingMode — works on devices with only one camera
+        try {
+          _stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          video.srcObject = _stream;
+          video.onloadedmetadata = () => { video.play(); status.style.display = 'none'; };
+        } catch (e2) {
+          closeCamera();
+          onError?.('no_camera');
+        }
       } else {
         status.textContent = `Camera error: ${err.message}`;
       }
@@ -145,11 +157,7 @@ export function openCamera(onCapture, onError) {
     canvas.width  = video.videoWidth  || 1280;
     canvas.height = video.videoHeight || 720;
     const ctx = canvas.getContext('2d');
-    // For front camera: mirror the captured image to match the preview
-    if (facingMode === 'user') {
-      ctx.translate(canvas.width, 0);
-      ctx.scale(-1, 1);
-    }
+    // No transformation — save exactly what the camera sees
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
       closeCamera();
