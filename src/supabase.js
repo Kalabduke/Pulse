@@ -258,17 +258,17 @@ export async function updateStatus(name, emoji, text, imageUrl = null, mediaType
 
   if (error) throw error;
 
-  client()
-    .from('status_history')
-    .insert({
-      user_id: user.id,
-      status_emoji: emoji,
-      status_text: text,
-      status_image_url: imageUrl,
-      status_media_type: mediaType
-    })
-    .then(({ error: histErr }) => {
-      if (histErr) console.warn('[Pulse] History log failed:', histErr.message);
+  // Log to history — try with media_type, fall back without it
+  const historyRow = { user_id: user.id, status_emoji: emoji, status_text: text, status_image_url: imageUrl };
+  client().from('status_history').insert({ ...historyRow, status_media_type: mediaType })
+    .then(({ error: e1 }) => {
+      if (e1) {
+        // Retry without status_media_type in case column doesn't exist
+        client().from('status_history').insert(historyRow)
+          .then(({ error: e2 }) => {
+            if (e2) console.warn('[Pulse] History log failed:', e2.message);
+          });
+      }
     });
 
   return data;

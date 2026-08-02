@@ -893,6 +893,20 @@ async function openChat(friend) {
   const chatView = document.getElementById('chat-view');
   if (chatView) chatView.style.display = 'flex';
 
+  // Restore saved background for this friend
+  const msgs = document.getElementById('chat-messages');
+  const savedBg = localStorage.getItem(`pulse-chat-bg-${friend.friendId}`);
+  if (msgs) {
+    if (savedBg) {
+      msgs.style.backgroundImage = `url(${savedBg})`;
+      msgs.style.backgroundSize = 'cover';
+      msgs.style.backgroundPosition = 'center';
+      msgs.style.backgroundAttachment = 'local';
+    } else {
+      msgs.style.backgroundImage = '';
+    }
+  }
+
   await loadChatMessages(friend.friendId);
   await markMessagesAsRead(friend.friendId);
 
@@ -1953,9 +1967,16 @@ function initEventListeners() {
           showAuthError('Password must be at least 6 characters.');
           return;
         }
-        await signUpWithPassword(email, password, name);
-        showToast('Account created! Check your email to confirm.');
-        setAuthMode('signin');
+        const signUpResult = await signUpWithPassword(email, password, name);
+        // If session is returned immediately, email confirmation is disabled — go to dashboard
+        if (signUpResult?.session) {
+          showToast('Account created! Welcome to Pulse 💫');
+          await checkNavigationState();
+        } else {
+          // Email confirmation required
+          showToast('Account created! Check your email to confirm, then sign in.');
+          setAuthMode('signin');
+        }
       } else {
         await signInWithPassword(email, password);
         showToast('Welcome back! 💫');
@@ -2316,6 +2337,34 @@ function initEventListeners() {
     if (picker) picker.style.display = 'none';
     navigateTo('dashboard');
     loadDashboardData();
+  });
+
+  // Chat background from gallery
+  document.getElementById('chat-bg-btn')?.addEventListener('click', () => {
+    document.getElementById('chat-bg-input')?.click();
+  });
+
+  document.getElementById('chat-bg-input')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      const msgs = document.getElementById('chat-messages');
+      if (msgs) {
+        msgs.style.backgroundImage = `url(${dataUrl})`;
+        msgs.style.backgroundSize = 'cover';
+        msgs.style.backgroundPosition = 'center';
+        msgs.style.backgroundAttachment = 'local';
+      }
+      // Store per-friend background
+      if (currentChatFriend?.friendId) {
+        localStorage.setItem(`pulse-chat-bg-${currentChatFriend.friendId}`, dataUrl);
+        showToast('Chat background updated!');
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   });
 
   // Reset config

@@ -259,7 +259,8 @@
           <span id="chat-friend-emoji" class="chat-header-emoji">😊</span>
           <span id="chat-friend-name" class="chat-header-name">Friend</span>
         </div>
-        <div style="width:60px;"></div>
+        <button id="chat-bg-btn" class="btn btn-small btn-secondary" style="padding:8px 10px;font-size:14px;" title="Chat background">🖼️</button>
+        <input type="file" id="chat-bg-input" accept="image/*" style="display:none;">
       </div>
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-area">
@@ -286,7 +287,7 @@
         </div>
         <div class="chat-input-row">
           <button id="chat-emoji-btn" class="chat-media-btn" title="Emoji">😊</button>
-          <input type="text" id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200">
+          <textarea id="chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="200" rows="1"></textarea>
           <button id="chat-camera-btn" class="chat-media-btn" title="Camera">📷</button>
           <button id="chat-file-btn" class="chat-media-btn" title="Photo/Video">🖼️</button>
           <button id="chat-send-btn" class="chat-send-btn">➤</button>
