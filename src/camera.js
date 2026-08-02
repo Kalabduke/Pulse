@@ -5,7 +5,19 @@
 
 let _stream = null;
 
-export function openCamera(onCapture, onError) {
+export async function openCamera(onCapture, onError) {
+  // First check if camera permission is already denied
+  // If so, skip the overlay entirely and use native camera input
+  if (navigator.permissions) {
+    try {
+      const perm = await navigator.permissions.query({ name: 'camera' });
+      if (perm.state === 'denied') {
+        onError?.('no_camera');
+        return;
+      }
+    } catch {}
+  }
+
   document.getElementById('pulse-camera-overlay')?.remove();
 
   const overlay = document.createElement('div');
@@ -128,8 +140,10 @@ export function openCamera(onCapture, onError) {
     if (!_stream) {
       const errName = lastErr?.name || '';
       if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        // Show instructions — don't fall back (user needs to grant permission)
-        statusEl.textContent = '📷 Camera access denied.\n\nTap the 🔒 lock icon in your address bar → Camera → Allow, then tap Cancel and try again.';
+        // Permission denied — close overlay and use native camera input
+        console.log('[Camera] Permission denied, falling back to native camera');
+        closeCamera();
+        onError?.('no_camera');
       } else {
         // Unknown error — show it but also offer gallery fallback
         statusEl.innerHTML = `Camera unavailable (${lastErr?.message || 'unknown'}).<br><br>
@@ -215,8 +229,15 @@ export function openCamera(onCapture, onError) {
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     // Mirror captured image for front camera to match the mirrored preview
-    if (facingMode === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(video, 0, 0, w, h);
+    if (facingMode === 'user') {
+      ctx.save();
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, w, h);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, w, h);
+    }
     canvas.toBlob(blob => {
       closeCamera();
       if (blob) onCapture(new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' }));
