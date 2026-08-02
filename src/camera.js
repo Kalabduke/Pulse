@@ -91,18 +91,28 @@ export function openCamera(onCapture, onError) {
     // Mirror front camera in preview
     video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
 
+    // Check if getUserMedia is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      statusEl.textContent = 'Camera not supported on this browser. Use the 🖼️ Gallery button instead.';
+      return;
+    }
+
     const constraints = [
       { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
       { video: { facingMode: { ideal: facing } }, audio: true },
-      { video: true, audio: true },
+      { video: { facingMode: facing }, audio: false },
+      { video: true, audio: false },
     ];
 
     let lastErr;
     for (const c of constraints) {
       try {
+        console.log('[Camera] Trying constraints:', JSON.stringify(c));
         _stream = await navigator.mediaDevices.getUserMedia(c);
+        console.log('[Camera] Got stream:', _stream.getTracks().map(t => t.kind + ':' + t.label).join(', '));
         break;
       } catch (e) {
+        console.warn('[Camera] Constraint failed:', e.name, e.message);
         lastErr = e;
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') break;
         if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
@@ -113,30 +123,39 @@ export function openCamera(onCapture, onError) {
 
     if (!_stream) {
       if (lastErr?.name === 'NotAllowedError' || lastErr?.name === 'PermissionDeniedError') {
-        statusEl.textContent = '📷 Camera access denied.\n\nTap the lock icon in your browser address bar → Permissions → Camera → Allow.';
+        statusEl.textContent = '📷 Camera access denied.\n\nTap the 🔒 lock icon in your browser address bar → Camera → Allow, then try again.';
       } else {
-        statusEl.textContent = `Camera error: ${lastErr?.message || 'unknown'}`;
+        statusEl.textContent = `Camera unavailable: ${lastErr?.message || 'unknown error'}`;
+        setTimeout(() => { closeCamera(); onError?.('no_camera'); }, 3000);
       }
       return;
     }
 
-    video.srcObject = _stream;
-    // Use multiple event approaches for cross-browser/mobile compatibility
-    video.onloadedmetadata = () => {
-      const p = video.play();
-      if (p) p.then(() => { statusEl.style.display = 'none'; }).catch(() => {
-        // Autoplay blocked — try again with user gesture on shutter click
-        statusEl.textContent = 'Tap anywhere to start preview';
-        overlay.addEventListener('click', () => {
-          video.play().then(() => { statusEl.style.display = 'none'; }).catch(() => {});
-        }, { once: true });
+    try {
+      video.srcObject = _stream;
+      video.setAttribute('playsinline', '');
+      video.setAttribute('webkit-playsinline', '');
+      video.muted = true;
+
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = resolve;
+        video.onerror = reject;
+        setTimeout(resolve, 3000); // fallback if metadata never fires
       });
-    };
-    // Fallback for older browsers
-    video.oncanplay = () => {
-      if (video.paused) video.play().catch(() => {});
+
+      await video.play();
       statusEl.style.display = 'none';
-    };
+      console.log('[Camera] Playing. Size:', video.videoWidth, 'x', video.videoHeight);
+    } catch (e) {
+      console.warn('[Camera] Play failed:', e.message);
+      // Try playing on next user interaction
+      statusEl.textContent = 'Tap to start preview';
+      const startOnTap = () => {
+        video.play().then(() => { statusEl.style.display = 'none'; }).catch(() => {});
+        overlay.removeEventListener('click', startOnTap);
+      };
+      overlay.addEventListener('click', startOnTap);
+    }
   };
 
   /* ── close ── */
@@ -212,10 +231,10 @@ export function openCamera(onCapture, onError) {
   };
 
   /* ── events ── */
-  document.getElementById('pulse-cam-mode-photo').addEventListener('click', () => setMode('photo'));
-  document.getElementById('pulse-cam-mode-video').addEventListener('click', () => setMode('video'));
-  document.getElementById('pulse-cam-cancel').addEventListener('click', closeCamera);
-  document.getElementById('pulse-cam-flip').addEventListener('click', async () => {
+  overlay.querySelector('#pulse-cam-mode-photo').addEventListener('click', () => setMode('photo'));
+  overlay.querySelector('#pulse-cam-mode-video').addEventListener('click', () => setMode('video'));
+  overlay.querySelector('#pulse-cam-cancel').addEventListener('click', closeCamera);
+  overlay.querySelector('#pulse-cam-flip').addEventListener('click', async () => {
     facingMode = facingMode === 'environment' ? 'user' : 'environment';
     await startStream(facingMode);
   });
