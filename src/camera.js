@@ -1,23 +1,10 @@
 /**
- * In-app camera — photo + video
- * Mirror mode: front camera preview and capture both mirrored (like a real mirror)
+ * In-app camera — photo + video, mirror mode for front camera
  */
 
 let _stream = null;
 
-export async function openCamera(onCapture, onError) {
-  // First check if camera permission is already denied
-  // If so, skip the overlay entirely and use native camera input
-  if (navigator.permissions) {
-    try {
-      const perm = await navigator.permissions.query({ name: 'camera' });
-      if (perm.state === 'denied') {
-        onError?.('no_camera');
-        return;
-      }
-    } catch {}
-  }
-
+export function openCamera(onCapture, onError) {
   document.getElementById('pulse-camera-overlay')?.remove();
 
   const overlay = document.createElement('div');
@@ -28,176 +15,54 @@ export async function openCamera(onCapture, onError) {
   `;
 
   overlay.innerHTML = `
-    <div id="pulse-cam-wrap" style="flex:1;position:relative;overflow:hidden;background:#000;">
-      <video id="pulse-cam-video" autoplay playsinline muted webkit-playsinline
+    <div style="flex:1;position:relative;overflow:hidden;background:#000;">
+      <video id="pulse-cam-video" autoplay playsinline muted
         style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"></video>
       <div id="pulse-cam-status"
         style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-          color:white;font-size:15px;text-align:center;padding:24px;
-          background:rgba(0,0,0,0.6);">
-        Requesting camera...
+        color:white;font-size:15px;text-align:center;padding:24px;background:rgba(0,0,0,0.6);">
+        Starting camera...
       </div>
       <div id="pulse-cam-rec-bar"
         style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);
-          background:rgba(239,68,68,0.9);color:white;font-size:13px;font-weight:700;
-          padding:6px 16px;border-radius:20px;align-items:center;gap:8px;">
+        background:rgba(239,68,68,0.9);color:white;font-size:13px;font-weight:700;
+        padding:6px 16px;border-radius:20px;align-items:center;gap:8px;">
         <div style="width:8px;height:8px;border-radius:50%;background:white;"></div>
         <span id="pulse-cam-timer">0:00</span>
       </div>
     </div>
-
     <div style="background:#111;padding:8px 0 4px;display:flex;justify-content:center;gap:32px;">
-      <button id="pulse-cam-mode-photo"
-        style="background:none;border:none;color:white;font-size:13px;font-weight:700;
-          cursor:pointer;padding:6px 16px;border-bottom:2px solid white;">PHOTO</button>
-      <button id="pulse-cam-mode-video"
-        style="background:none;border:none;color:#888;font-size:13px;font-weight:500;
-          cursor:pointer;padding:6px 16px;border-bottom:2px solid transparent;">VIDEO</button>
+      <button id="pulse-cam-mode-photo" style="background:none;border:none;color:white;font-size:13px;
+        font-weight:700;cursor:pointer;padding:6px 16px;border-bottom:2px solid white;">PHOTO</button>
+      <button id="pulse-cam-mode-video" style="background:none;border:none;color:#888;font-size:13px;
+        font-weight:500;cursor:pointer;padding:6px 16px;border-bottom:2px solid transparent;">VIDEO</button>
     </div>
-
-    <div style="background:#111;padding:16px 24px 32px;
-      display:flex;align-items:center;justify-content:space-between;">
-      <button id="pulse-cam-cancel"
-        style="background:rgba(255,255,255,0.12);border:none;color:white;
-          font-size:14px;padding:10px 20px;border-radius:24px;cursor:pointer;
-          touch-action:manipulation;">Cancel</button>
-      <button id="pulse-cam-shutter"
-        style="width:70px;height:70px;border-radius:50%;border:5px solid rgba(255,255,255,0.4);
-          background:white;cursor:pointer;touch-action:manipulation;flex-shrink:0;">
-        <div id="pulse-cam-inner"
-          style="width:54px;height:54px;border-radius:50%;background:white;border:2px solid #333;
-            margin:auto;"></div>
+    <div style="background:#111;padding:16px 24px 32px;display:flex;align-items:center;justify-content:space-between;">
+      <button id="pulse-cam-cancel" style="background:rgba(255,255,255,0.12);border:none;color:white;
+        font-size:14px;padding:10px 20px;border-radius:24px;cursor:pointer;touch-action:manipulation;">Cancel</button>
+      <button id="pulse-cam-shutter" style="width:70px;height:70px;border-radius:50%;
+        border:5px solid rgba(255,255,255,0.4);background:white;cursor:pointer;touch-action:manipulation;">
+        <div id="pulse-cam-inner" style="width:54px;height:54px;border-radius:50%;
+          background:white;border:2px solid #333;margin:auto;"></div>
       </button>
-      <button id="pulse-cam-flip"
-        style="background:rgba(255,255,255,0.12);border:none;color:white;
-          font-size:22px;padding:10px 14px;border-radius:24px;cursor:pointer;
-          touch-action:manipulation;">🔄</button>
+      <button id="pulse-cam-flip" style="background:rgba(255,255,255,0.12);border:none;color:white;
+        font-size:22px;padding:10px 14px;border-radius:24px;cursor:pointer;touch-action:manipulation;">🔄</button>
     </div>
   `;
 
   document.body.appendChild(overlay);
 
-  const video    = document.getElementById('pulse-cam-video');
-  const statusEl = document.getElementById('pulse-cam-status');
-  const recBar   = document.getElementById('pulse-cam-rec-bar');
-  const timerEl  = document.getElementById('pulse-cam-timer');
-  const shutter  = document.getElementById('pulse-cam-shutter');
-  const inner    = document.getElementById('pulse-cam-inner');
+  const video   = overlay.querySelector('#pulse-cam-video');
+  const statusEl = overlay.querySelector('#pulse-cam-status');
+  const recBar  = overlay.querySelector('#pulse-cam-rec-bar');
+  const timerEl = overlay.querySelector('#pulse-cam-timer');
+  const shutter = overlay.querySelector('#pulse-cam-shutter');
+  const inner   = overlay.querySelector('#pulse-cam-inner');
 
   let facingMode = 'environment';
-  let mode       = 'photo';
-  let recorder   = null;
-  let recChunks  = [];
-  let recTimer   = null;
-  let recSecs    = 0;
+  let mode = 'photo';
+  let recorder = null, recChunks = [], recTimer = null, recSecs = 0;
 
-  /* ── stream ── */
-  const startStream = async (facing) => {
-    statusEl.style.display = 'flex';
-    statusEl.textContent = 'Starting camera...';
-    if (_stream) {
-      _stream.getTracks().forEach(t => t.stop());
-      _stream = null;
-    }
-
-    // Mirror preview for front camera — like touching a mirror
-    // Will be updated after stream starts based on actual camera facing
-    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
-
-    // Check if getUserMedia is available
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      statusEl.textContent = 'Camera not supported on this browser. Use the 🖼️ Gallery button instead.';
-      return;
-    }
-
-    const constraints = [
-      { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
-      { video: { facingMode: { ideal: facing } }, audio: true },
-      { video: { facingMode: facing }, audio: false },
-      { video: true, audio: false },
-    ];
-
-    let lastErr;
-    for (const c of constraints) {
-      try {
-        console.log('[Camera] Trying constraints:', JSON.stringify(c));
-        _stream = await navigator.mediaDevices.getUserMedia(c);
-        console.log('[Camera] Got stream:', _stream.getTracks().map(t => t.kind + ':' + t.label).join(', '));
-        break;
-      } catch (e) {
-        console.warn('[Camera] Constraint failed:', e.name, e.message);
-        lastErr = e;
-        // Only stop trying on hard failures
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') break;
-        if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
-          // Truly no camera — fall back to gallery
-          closeCamera(); onError?.('no_camera'); return;
-        }
-        // For other errors (OverconstrainedError etc) keep trying next constraint
-      }
-    }
-
-    if (!_stream) {
-      const errName = lastErr?.name || '';
-      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
-        // Permission denied — close overlay and use native camera input
-        console.log('[Camera] Permission denied, falling back to native camera');
-        closeCamera();
-        onError?.('no_camera');
-      } else {
-        // Unknown error — show it but also offer gallery fallback
-        statusEl.innerHTML = `Camera unavailable (${lastErr?.message || 'unknown'}).<br><br>
-          <button onclick="document.getElementById('pulse-camera-overlay').remove()"
-            style="background:rgba(255,255,255,0.15);border:none;color:white;padding:10px 20px;
-              border-radius:20px;cursor:pointer;font-size:14px;margin-top:8px;">
-            Use Gallery instead
-          </button>`;
-        setTimeout(() => { closeCamera(); onError?.('no_camera'); }, 8000);
-      }
-      return;
-    }
-    try {
-      video.srcObject = _stream;
-      video.setAttribute('playsinline', '');
-      video.setAttribute('webkit-playsinline', '');
-      video.muted = true;
-
-      await new Promise((resolve, reject) => {
-        video.onloadedmetadata = resolve;
-        video.onerror = reject;
-        setTimeout(resolve, 3000); // fallback if metadata never fires
-      });
-
-      await video.play();
-      statusEl.style.display = 'none';
-
-      // Detect actual facing mode from stream track settings
-      // (the fallback { video: true } may give a front camera even when back was requested)
-      const videoTrack = _stream.getVideoTracks()[0];
-      const settings   = videoTrack?.getSettings?.() || {};
-      const actualFacing = settings.facingMode || facing;
-      const isFront = actualFacing === 'user' ||
-        (videoTrack?.label || '').toLowerCase().includes('front');
-      // On PC laptops there's only one camera — treat it as front-facing (mirror it)
-      const isPCWithSingleCam = !settings.facingMode;
-      const shouldMirror = isFront || isPCWithSingleCam;
-
-      facingMode = shouldMirror ? 'user' : 'environment';
-      video.style.transform = shouldMirror ? 'scaleX(-1)' : 'none';
-      console.log('[Camera] Playing. Facing:', actualFacing, '| Mirror:', shouldMirror);
-    } catch (e) {
-      console.warn('[Camera] Play failed:', e.message);
-      // Try playing on next user interaction
-      statusEl.textContent = 'Tap to start preview';
-      const startOnTap = () => {
-        video.play().then(() => { statusEl.style.display = 'none'; }).catch(() => {});
-        overlay.removeEventListener('click', startOnTap);
-      };
-      overlay.addEventListener('click', startOnTap);
-    }
-  };
-
-  /* ── close ── */
   const closeCamera = () => {
     clearInterval(recTimer);
     if (recorder?.state === 'recording') recorder.stop();
@@ -205,36 +70,89 @@ export async function openCamera(onCapture, onError) {
     overlay.remove();
   };
 
-  /* ── mode ── */
-  const setMode = (m) => {
-    mode = m;
-    const ph = document.getElementById('pulse-cam-mode-photo');
-    const vi = document.getElementById('pulse-cam-mode-video');
-    if (m === 'photo') {
-      ph.style.color = 'white'; ph.style.borderBottom = '2px solid white';
-      vi.style.color = '#888';  vi.style.borderBottom = '2px solid transparent';
-      inner.style.borderRadius = '50%'; inner.style.background = 'white';
-    } else {
-      vi.style.color = 'white'; vi.style.borderBottom = '2px solid #ef4444';
-      ph.style.color = '#888';  ph.style.borderBottom = '2px solid transparent';
-      inner.style.borderRadius = '6px'; inner.style.background = '#ef4444';
+  const startStream = async (facing) => {
+    statusEl.style.display = 'flex';
+    statusEl.textContent = 'Starting camera...';
+    if (_stream) { _stream.getTracks().forEach(t => t.stop()); _stream = null; }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      closeCamera(); onError?.('no_camera'); return;
+    }
+
+    // Try progressively simpler constraints until one works
+    const tries = [
+      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
+      { video: { facingMode: { ideal: facing } }, audio: false },
+      { video: true, audio: false },
+    ];
+
+    let gotStream = false;
+    for (const c of tries) {
+      try {
+        _stream = await navigator.mediaDevices.getUserMedia(c);
+        gotStream = true;
+        break;
+      } catch (e) {
+        console.warn('[Camera]', e.name, e.message);
+        if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
+          closeCamera(); onError?.('no_camera'); return;
+        }
+        // For NotAllowedError or others: keep trying simpler constraints
+      }
+    }
+
+    if (!gotStream) {
+      // Still failed — just show error, stay open so user sees it
+      statusEl.textContent = '📷 Camera unavailable. Check browser permissions and try again.';
+      return;
+    }
+
+    // Detect actual facing to apply correct mirroring
+    const track = _stream.getVideoTracks()[0];
+    const settings = track?.getSettings?.() || {};
+    const actualFacing = settings.facingMode || '';
+    const label = (track?.label || '').toLowerCase();
+    // Mirror if: explicitly user-facing, label says front, or unknown (PC webcam)
+    const shouldMirror = actualFacing === 'user' || label.includes('front') || !actualFacing;
+    facingMode = shouldMirror ? 'user' : 'environment';
+    video.style.transform = shouldMirror ? 'scaleX(-1)' : 'none';
+
+    video.srcObject = _stream;
+    try {
+      await video.play();
+      statusEl.style.display = 'none';
+    } catch {
+      statusEl.textContent = 'Tap anywhere to start preview';
+      overlay.addEventListener('click', () => {
+        video.play().then(() => { statusEl.style.display = 'none'; }).catch(() => {});
+      }, { once: true });
     }
   };
 
-  /* ── photo ── */
+  const setMode = (m) => {
+    mode = m;
+    const ph = overlay.querySelector('#pulse-cam-mode-photo');
+    const vi = overlay.querySelector('#pulse-cam-mode-video');
+    if (m === 'photo') {
+      ph.style.color='white'; ph.style.borderBottom='2px solid white';
+      vi.style.color='#888';  vi.style.borderBottom='2px solid transparent';
+      inner.style.borderRadius='50%'; inner.style.background='white';
+    } else {
+      vi.style.color='white'; vi.style.borderBottom='2px solid #ef4444';
+      ph.style.color='#888';  ph.style.borderBottom='2px solid transparent';
+      inner.style.borderRadius='6px'; inner.style.background='#ef4444';
+    }
+  };
+
   const takePhoto = () => {
     const w = video.videoWidth || 1280;
     const h = video.videoHeight || 720;
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    // Mirror captured image for front camera to match the mirrored preview
     if (facingMode === 'user') {
-      ctx.save();
-      ctx.translate(w, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, 0, 0, w, h);
-      ctx.restore();
+      ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, w, h); ctx.restore();
     } else {
       ctx.drawImage(video, 0, 0, w, h);
     }
@@ -244,7 +162,6 @@ export async function openCamera(onCapture, onError) {
     }, 'image/jpeg', 0.85);
   };
 
-  /* ── video rec ── */
   const startRec = () => {
     if (!_stream) return;
     const mimes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
@@ -254,41 +171,37 @@ export async function openCamera(onCapture, onError) {
     recorder.ondataavailable = e => { if (e.data?.size) recChunks.push(e.data); };
     recorder.onstop = () => {
       const blob = new Blob(recChunks, { type: mime });
-      const ext  = mime.includes('mp4') ? 'mp4' : 'webm';
+      const ext = mime.includes('mp4') ? 'mp4' : 'webm';
       closeCamera();
       if (blob.size) onCapture(new File([blob], `video_${Date.now()}.${ext}`, { type: mime }));
     };
     recorder.start(200);
-    inner.style.background = '#ef4444'; inner.style.borderRadius = '4px';
-    recBar.style.display = 'flex';
-    recSecs = 0; timerEl.textContent = '0:00';
+    inner.style.background='#ef4444'; inner.style.borderRadius='4px';
+    recBar.style.display='flex'; recSecs=0; timerEl.textContent='0:00';
     recTimer = setInterval(() => {
       recSecs++;
-      timerEl.textContent = `${Math.floor(recSecs/60)}:${String(recSecs%60).padStart(2,'0')}`;
+      timerEl.textContent=`${Math.floor(recSecs/60)}:${String(recSecs%60).padStart(2,'0')}`;
       if (recSecs >= 10) stopRec();
     }, 1000);
   };
 
   const stopRec = () => {
-    clearInterval(recTimer); recTimer = null;
-    recBar.style.display = 'none';
-    inner.style.background = '#ef4444'; inner.style.borderRadius = '6px';
-    if (recorder?.state === 'recording') recorder.stop();
+    clearInterval(recTimer); recTimer=null; recBar.style.display='none';
+    inner.style.background='#ef4444'; inner.style.borderRadius='6px';
+    if (recorder?.state==='recording') recorder.stop();
   };
 
-  /* ── events ── */
   overlay.querySelector('#pulse-cam-mode-photo').addEventListener('click', () => setMode('photo'));
   overlay.querySelector('#pulse-cam-mode-video').addEventListener('click', () => setMode('video'));
   overlay.querySelector('#pulse-cam-cancel').addEventListener('click', closeCamera);
   overlay.querySelector('#pulse-cam-flip').addEventListener('click', async () => {
-    facingMode = facingMode === 'environment' ? 'user' : 'environment';
+    facingMode = facingMode==='environment' ? 'user' : 'environment';
     await startStream(facingMode);
   });
-
   shutter.addEventListener('click', () => {
-    if (mode === 'photo') { takePhoto(); }
-    else if (!recorder || recorder.state === 'inactive') { startRec(); }
-    else { stopRec(); }
+    if (mode==='photo') takePhoto();
+    else if (!recorder || recorder.state==='inactive') startRec();
+    else stopRec();
   });
 
   startStream(facingMode);
