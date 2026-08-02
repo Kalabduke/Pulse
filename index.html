@@ -263,6 +263,11 @@
       </div>
       <div id="chat-messages" class="chat-messages"></div>
       <div class="chat-input-area">
+        <!-- Reply bar — shown when replying to a message -->
+        <div id="chat-reply-bar" style="display:none;" class="chat-reply-bar">
+          <span id="chat-reply-bar-text" class="chat-reply-bar-text"></span>
+          <button id="chat-reply-cancel" class="chat-reply-cancel" onclick="clearReply()">✕</button>
+        </div>
         <!-- Chat emoji picker popup -->
         <div id="chat-emoji-picker" class="chat-emoji-picker" style="display:none;">
           <div class="chat-emoji-picker-tabs" id="chat-emoji-tabs">

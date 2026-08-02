@@ -707,7 +707,7 @@ export async function fetchPrivateStatusesForMe() {
   };
 }
 
-export async function sendDirectMessage(recipientId, text, imageUrl = null) {
+export async function sendDirectMessage(recipientId, text, imageUrl = null, replyToId = null) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
   if (!recipientId) throw new Error('Recipient is required.');
@@ -717,10 +717,11 @@ export async function sendDirectMessage(recipientId, text, imageUrl = null) {
   const { data, error } = await client()
     .from('messages')
     .insert({
-      sender_id: user.id,
+      sender_id:    user.id,
       recipient_id: recipientId,
       content_text: text,
-      image_url: imageUrl
+      image_url:    imageUrl,
+      reply_to_id:  replyToId || null
     })
     .select()
     .single();
@@ -735,7 +736,7 @@ export async function fetchDirectMessages(friendId) {
 
   const { data, error } = await client()
     .from('messages')
-    .select('*')
+    .select('*, reply:reply_to_id(id, content_text, image_url, sender_id)')
     .or(`and(sender_id.eq.${user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${user.id})`)
     .order('created_at', { ascending: true });
 

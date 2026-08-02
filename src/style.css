@@ -1450,8 +1450,101 @@ body {
 }
 
 /* ==========================================
-   CHAT EMOJI PICKER
+   CHAT REPLY
    ========================================== */
+.chat-reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(99, 102, 241, 0.1);
+  border-left: 3px solid hsl(var(--primary));
+  border-radius: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-reply-bar-text {
+  flex: 1;
+  font-size: 12px;
+  color: hsl(var(--text-secondary));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-reply-cancel {
+  background: none;
+  border: none;
+  color: hsl(var(--text-muted));
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  touch-action: manipulation;
+}
+
+.chat-reply-cancel:hover {
+  color: #ef4444;
+}
+
+/* Reply preview inside a bubble */
+.chat-reply-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: hsl(var(--text-muted));
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.chat-reply-bar-line {
+  width: 3px;
+  height: 100%;
+  min-height: 20px;
+  border-radius: 2px;
+  background: hsl(var(--primary));
+  flex-shrink: 0;
+}
+
+.chat-reply-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+/* Reply button on each bubble */
+.chat-reply-btn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  color: hsl(var(--text-muted));
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.chat-bubble:hover .chat-reply-btn,
+.chat-bubble:active .chat-reply-btn {
+  opacity: 1;
+}
+
+/* Always visible on touch devices */
+@media (hover: none) {
+  .chat-reply-btn {
+    opacity: 0.6;
+  }
+}
 .chat-emoji-picker {
   position: absolute;
   bottom: 100%;

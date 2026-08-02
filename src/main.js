@@ -73,6 +73,7 @@ let currentStatusImageUrl = null;
 let isStatusImageRemoved = false;
 let currentChatImage = null;
 let currentChatFriend = null;
+let currentReplyTo = null; // { id, content_text, image_url, sender_id }
 
 const cache = {
   connections: null,
@@ -919,21 +920,52 @@ async function loadChatMessages(friendId) {
     container.innerHTML = messages.map(msg => {
       const isSent = msg.sender_id === myId;
       const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const isVideo = msg.image_url && (msg.image_url.includes('.mp4') || msg.image_url.includes('.webm') || msg.image_url.includes('video'));
+      const isVideo = msg.image_url && isVideoUrl(msg.image_url, null);
       const mediaHtml = msg.image_url
         ? isVideo
           ? `<video src="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;" controls playsinline preload="metadata"></video>`
           : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
         : '';
 
+      // Reply preview
+      const replyHtml = msg.reply
+        ? `<div class="chat-reply-preview">
+             <span class="chat-reply-bar"></span>
+             <span class="chat-reply-text">${escapeHtml(msg.reply.content_text || (msg.reply.image_url ? '📎 Media' : ''))}</span>
+           </div>`
+        : '';
+
       return `
-        <div class="chat-bubble ${isSent ? 'sent' : 'received'}">
+        <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
+          data-content="${escapeHtml(msg.content_text || '')}"
+          data-image="${escapeHtml(msg.image_url || '')}"
+          data-sender="${escapeHtml(msg.sender_id)}">
+          ${replyHtml}
           ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
           ${mediaHtml}
-          <span class="chat-bubble-time">${time}</span>
+          <div style="display:flex;align-items:center;justify-content:${isSent ? 'flex-end' : 'flex-start'};gap:8px;margin-top:4px;">
+            <span class="chat-bubble-time">${time}</span>
+            <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
+          </div>
         </div>
       `;
     }).join('');
+
+    // Attach reply button listeners
+    container.querySelectorAll('.chat-reply-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const msgId = btn.dataset.msgId;
+        const bubble = container.querySelector(`[data-msg-id="${msgId}"]`);
+        if (!bubble) return;
+        setReply({
+          id: msgId,
+          content_text: bubble.dataset.content,
+          image_url: bubble.dataset.image,
+          sender_id: bubble.dataset.sender
+        });
+      });
+    });
 
     container.scrollTop = container.scrollHeight;
   } catch (err) {
@@ -941,26 +973,49 @@ async function loadChatMessages(friendId) {
   }
 }
 
+function setReply(msg) {
+  currentReplyTo = msg;
+  const bar = document.getElementById('chat-reply-bar');
+  const text = document.getElementById('chat-reply-bar-text');
+  if (!bar || !text) return;
+  const preview = msg.content_text || (msg.image_url ? '📎 Media' : '');
+  text.textContent = `↩ ${preview.slice(0, 60)}${preview.length > 60 ? '…' : ''}`;
+  bar.style.display = 'flex';
+  document.getElementById('chat-input')?.focus();
+}
+
+function clearReply() {
+  currentReplyTo = null;
+  const bar = document.getElementById('chat-reply-bar');
+  if (bar) bar.style.display = 'none';
+}
+
 async function sendChatMessage() {
-  const input = document.getElementById('chat-input');
-  const text = input?.value.trim() || '';
+  const input   = document.getElementById('chat-input');
+  const text    = input?.value.trim() || '';
   const sendBtn = document.getElementById('chat-send-btn');
 
   if (!text && !currentChatImage) return;
   if (!currentChatFriend) return;
 
   sendBtn.disabled = true;
+  const replyToId = currentReplyTo?.id || null;
 
   try {
     let imageUrl = null;
     if (currentChatImage) {
-      showToast('Uploading image...');
-      imageUrl = await uploadStatusImage(currentChatImage);
+      if (currentChatImage._cloudinaryUrl) {
+        imageUrl = currentChatImage._cloudinaryUrl;
+      } else {
+        showToast('Uploading...');
+        imageUrl = await uploadStatusImage(currentChatImage);
+      }
     }
 
-    await sendDirectMessage(currentChatFriend.friendId, text, imageUrl);
+    await sendDirectMessage(currentChatFriend.friendId, text, imageUrl, replyToId);
     if (input) input.value = '';
     removeChatImage();
+    clearReply();
     await loadChatMessages(currentChatFriend.friendId);
   } catch (err) {
     showToast(err.message || 'Failed to send', 'error');
@@ -1605,6 +1660,7 @@ function openFullMedia(url, isVideo = false) {
 
 window.openFullImage = openFullImage;
 window.openFullMedia = openFullMedia;
+window.clearReply    = clearReply;
 
 /* ==========================================
    PWA — SERVICE WORKER & NOTIFICATIONS
@@ -2168,10 +2224,9 @@ function initEventListeners() {
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
   document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendChatMessage();
-    }
+    // Enter without Shift = newline (send is handled by the send button only)
+    // Shift+Enter also = newline
+    // No auto-send on Enter — user must tap the ➤ button
   });
 
   // Chat emoji picker
@@ -2256,7 +2311,7 @@ function initEventListeners() {
 
   document.getElementById('chat-back-btn')?.addEventListener('click', () => {
     currentChatFriend = null;
-    // Close emoji picker if open
+    clearReply();
     const picker = document.getElementById('chat-emoji-picker');
     if (picker) picker.style.display = 'none';
     navigateTo('dashboard');
