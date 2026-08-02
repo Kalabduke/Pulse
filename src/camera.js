@@ -88,8 +88,8 @@ export function openCamera(onCapture, onError) {
       _stream = null;
     }
 
-    // Mirror front camera in preview
-    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+    // No mirroring — show exactly what the camera sees (like a video call)
+    video.style.transform = 'none';
 
     // Check if getUserMedia is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -189,8 +189,7 @@ export function openCamera(onCapture, onError) {
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    // Mirror captured image for front camera (matches mirrored preview)
-    if (facingMode === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }
+    // No flip — save exactly what the camera sees
     ctx.drawImage(video, 0, 0, w, h);
     canvas.toBlob(blob => {
       closeCamera();
