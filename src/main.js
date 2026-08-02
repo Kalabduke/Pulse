@@ -2170,9 +2170,8 @@ function initEventListeners() {
         }
       },
       (reason) => {
-        if (reason === 'no_camera') {
-          document.getElementById('status-file-input')?.click();
-        }
+        // Fall back to OS native camera input
+        document.getElementById('status-camera-input')?.click();
       }
     );
   });
@@ -2344,10 +2343,9 @@ function initEventListeners() {
           handleChatImage(file, false);
         }
       },
-      (reason) => {
-        if (reason === 'no_camera') {
-          document.getElementById('chat-file-input')?.click();
-        }
+      () => {
+        // Fall back to OS native camera input
+        document.getElementById('chat-camera-input')?.click();
       }
     );
   });

@@ -88,8 +88,8 @@ export function openCamera(onCapture, onError) {
       _stream = null;
     }
 
-    // No mirroring — show exactly what the camera sees (like a video call)
-    video.style.transform = 'none';
+    // Mirror preview for front camera — like touching a mirror
+    video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
 
     // Check if getUserMedia is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -122,15 +122,12 @@ export function openCamera(onCapture, onError) {
     }
 
     if (!_stream) {
-      if (lastErr?.name === 'NotAllowedError' || lastErr?.name === 'PermissionDeniedError') {
-        statusEl.textContent = '📷 Camera access denied.\n\nTap the 🔒 lock icon in your browser address bar → Camera → Allow, then try again.';
-      } else {
-        statusEl.textContent = `Camera unavailable: ${lastErr?.message || 'unknown error'}`;
-        setTimeout(() => { closeCamera(); onError?.('no_camera'); }, 3000);
-      }
+      // All getUserMedia attempts failed — close overlay and fall back to OS native camera
+      console.warn('[Camera] All getUserMedia failed, falling back to file input');
+      closeCamera();
+      onError?.('no_camera');
       return;
     }
-
     try {
       video.srcObject = _stream;
       video.setAttribute('playsinline', '');
@@ -189,7 +186,8 @@ export function openCamera(onCapture, onError) {
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
-    // No flip — save exactly what the camera sees
+    // Mirror captured image for front camera to match the mirrored preview
+    if (facingMode === 'user') { ctx.translate(w, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, w, h);
     canvas.toBlob(blob => {
       closeCamera();
