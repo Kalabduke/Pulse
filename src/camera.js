@@ -89,6 +89,7 @@ export function openCamera(onCapture, onError) {
     }
 
     // Mirror preview for front camera — like touching a mirror
+    // Will be updated after stream starts based on actual camera facing
     video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
 
     // Check if getUserMedia is available
@@ -142,7 +143,21 @@ export function openCamera(onCapture, onError) {
 
       await video.play();
       statusEl.style.display = 'none';
-      console.log('[Camera] Playing. Size:', video.videoWidth, 'x', video.videoHeight);
+
+      // Detect actual facing mode from stream track settings
+      // (the fallback { video: true } may give a front camera even when back was requested)
+      const videoTrack = _stream.getVideoTracks()[0];
+      const settings   = videoTrack?.getSettings?.() || {};
+      const actualFacing = settings.facingMode || facing;
+      const isFront = actualFacing === 'user' ||
+        (videoTrack?.label || '').toLowerCase().includes('front');
+      // On PC laptops there's only one camera — treat it as front-facing (mirror it)
+      const isPCWithSingleCam = !settings.facingMode;
+      const shouldMirror = isFront || isPCWithSingleCam;
+
+      facingMode = shouldMirror ? 'user' : 'environment';
+      video.style.transform = shouldMirror ? 'scaleX(-1)' : 'none';
+      console.log('[Camera] Playing. Facing:', actualFacing, '| Mirror:', shouldMirror);
     } catch (e) {
       console.warn('[Camera] Play failed:', e.message);
       // Try playing on next user interaction
