@@ -1167,6 +1167,9 @@ async function openChat(friend) {
       msgs.style.backgroundImage = '';
     }
   }
+  // Show the remove button only when this chat has a background set
+  const bgRemoveBtn = document.getElementById('chat-bg-remove-btn');
+  if (bgRemoveBtn) bgRemoveBtn.style.display = savedBg ? '' : 'none';
 
   await loadChatMessages(friend.friendId);
   // Deliver first, then read — gives the sender both receipts in order.
@@ -3269,6 +3272,10 @@ function initEventListeners() {
         msgs.style.backgroundPosition = 'center';
         msgs.style.backgroundAttachment = 'local';
       }
+      // Show the remove button whenever the preview is applied, even if
+      // persisting to localStorage fails — removal just clears the styles.
+      const bgRemoveBtn = document.getElementById('chat-bg-remove-btn');
+      if (bgRemoveBtn) bgRemoveBtn.style.display = '';
       // Store per-friend background
       if (currentChatFriend?.friendId) {
         try {
@@ -3281,6 +3288,22 @@ function initEventListeners() {
     } catch (bgErr) {
       showToast('Could not process that image.', 'error');
     }
+  });
+
+  // Remove chat background
+  document.getElementById('chat-bg-remove-btn')?.addEventListener('click', () => {
+    if (!currentChatFriend?.friendId) return;
+    localStorage.removeItem(`pulse-chat-bg-${currentChatFriend.friendId}`);
+    const msgs = document.getElementById('chat-messages');
+    if (msgs) {
+      msgs.style.backgroundImage = '';
+      msgs.style.backgroundSize = '';
+      msgs.style.backgroundPosition = '';
+      msgs.style.backgroundAttachment = '';
+    }
+    const btn = document.getElementById('chat-bg-remove-btn');
+    if (btn) btn.style.display = 'none';
+    showToast('Chat background removed.');
   });
 
   // Reset config
