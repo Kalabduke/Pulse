@@ -45,6 +45,10 @@ import {
   client
 } from './supabase.js';
 
+// Inline SVG icons — stroke="currentColor" so they inherit the text color
+const ICON_EYE = '<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const ICON_EYE_OFF = '<svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>';
+
 const _savedHash = window.location.hash;
 const _savedSearch = window.location.search;
 (function cleanUrl() {
@@ -851,8 +855,8 @@ function renderFriendsFeed() {
         ${sentPreview}
       </div>
       <div style="display:flex;flex-direction:row;gap:4px;align-self:flex-start;flex-shrink:0;margin-left:auto;">
-        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-friend-id="${escapeHtml(friend.friendId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '✏️' : '🏷️'}</button>
-        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" style="padding:5px 8px;font-size:13px;line-height:1;">✕</button>
+        <button class="btn btn-secondary btn-small nickname-btn" data-conn-id="${escapeHtml(friend.connectionId)}" data-friend-id="${escapeHtml(friend.friendId)}" data-current-nickname="${escapeHtml(friend.nickname || '')}" data-real-name="${escapeHtml(friend.name)}" title="${friend.nickname ? 'Edit nickname' : 'Add nickname'}" style="padding:5px 8px;font-size:13px;line-height:1;">${friend.nickname ? '<svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>' : '<svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/><circle cx="12" cy="12" r="4"/></svg>'}</button>
+        <button class="btn btn-secondary btn-small btn-small-danger remove-connection-btn" data-conn-id="${escapeHtml(friend.connectionId)}" title="Remove connection" style="padding:5px 8px;font-size:13px;line-height:1;"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
       </div>
     `;
     container.appendChild(card);
@@ -1286,9 +1290,9 @@ function buildChatRow(msg, myId) {
         <div class="chat-meta">
           <span class="chat-bubble-time">${time}</span>
           ${ticks}
-          <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
-          <button class="chat-react-btn" data-msg-id="${escapeHtml(msg.id)}" title="React">🙂</button>
-          ${isSent ? `<button class="chat-del-btn" data-msg-id="${escapeHtml(msg.id)}" title="Delete message">🗑</button>` : ''}
+          <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>
+          <button class="chat-react-btn" data-msg-id="${escapeHtml(msg.id)}" title="React"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/></svg></button>
+          ${isSent ? `<button class="chat-del-btn" data-msg-id="${escapeHtml(msg.id)}" title="Delete message"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
         </div>
         ${reactionsHtml}
       </div>
@@ -2481,7 +2485,7 @@ function initEventListeners() {
     if (!keyInput) return;
     const isHidden = keyInput.type === 'password';
     keyInput.type = isHidden ? 'text' : 'password';
-    if (btn) btn.textContent = isHidden ? '🙈' : '👁';
+    if (btn) btn.innerHTML = isHidden ? ICON_EYE_OFF : ICON_EYE;
   });
 
   ['config-url', 'config-key'].forEach(id => {
@@ -2502,7 +2506,7 @@ function initEventListeners() {
     const btn = document.getElementById('btn-toggle-password');
     if (!inp) return;
     inp.type = inp.type === 'password' ? 'text' : 'password';
-    if (btn) btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+    if (btn) btn.innerHTML = inp.type === 'password' ? ICON_EYE : ICON_EYE_OFF;
   });
 
   document.getElementById('btn-toggle-confirm')?.addEventListener('click', () => {
@@ -2510,7 +2514,7 @@ function initEventListeners() {
     const btn = document.getElementById('btn-toggle-confirm');
     if (!inp) return;
     inp.type = inp.type === 'password' ? 'text' : 'password';
-    if (btn) btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+    if (btn) btn.innerHTML = inp.type === 'password' ? ICON_EYE : ICON_EYE_OFF;
   });
 
   document.getElementById('btn-google-auth')?.addEventListener('click', async () => {
@@ -2837,9 +2841,12 @@ function initEventListeners() {
   });
 
   document.getElementById('btn-refresh')?.addEventListener('click', async () => {
+    const icon = document.getElementById('refresh-icon');
+    if (icon) icon.classList.add('spinning');
     invalidateCache();
     await loadDashboardData();
-    showToast('Refreshed! 🔄');
+    if (icon) setTimeout(() => icon.classList.remove('spinning'), 800);
+    showToast('Refreshed!');
   });
 
   document.getElementById('btn-copy-id')?.addEventListener('click', async () => {
@@ -2890,9 +2897,9 @@ function initEventListeners() {
   function _flashCopyFeedback(id) {
     const el = document.getElementById(id);
     if (!el) return;
-    const original = el.textContent;
-    el.textContent = '✓ Copied';
-    setTimeout(() => { if (el.textContent === '✓ Copied') el.textContent = original; }, 1500);
+    const original = el.innerHTML;
+    el.innerHTML = '✓ Copied';
+    setTimeout(() => { if (el.innerHTML === '✓ Copied') el.innerHTML = original; }, 1500);
   }
 
   // Chat
