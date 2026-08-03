@@ -1154,7 +1154,7 @@ body {
 /* Quick-reaction picker popup */
 .chat-react-picker {
   position: absolute;
-  bottom: 100%;
+  top: calc(100% + 4px);
   left: 0;
   display: flex;
   flex-wrap: wrap;
@@ -1164,7 +1164,7 @@ body {
   background: #19142b;
   border: 1px solid var(--border-glow);
   border-radius: 14px;
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   z-index: 40;
   animation: fadeIn 0.15s ease;
 }
@@ -1180,7 +1180,7 @@ body {
    ========================================== */
 .chat-action-sheet {
   position: absolute;
-  bottom: calc(100% + 4px);
+  top: calc(100% + 4px);
   left: 0;
   display: flex;
   flex-direction: column;
@@ -1190,7 +1190,7 @@ body {
   background: #19142b;
   border: 1px solid var(--border-glow);
   border-radius: 14px;
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   z-index: 60;
   animation: fadeIn 0.15s ease;
 }

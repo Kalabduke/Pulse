@@ -1483,6 +1483,8 @@ function toggleReactPicker(msgId, btn) {
   picker.innerHTML = REACTION_EMOJIS.map(e => `<button type="button" data-emoji="${e}">${e}</button>`).join('');
   bubble.appendChild(picker);
   openReactPicker = picker;
+  // Pickers open BELOW the bubble — keep them fully in view.
+  picker.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function closeReactPicker() {
@@ -1524,6 +1526,9 @@ function showChatActionSheet(msgId, bubble) {
   `;
   bubble.appendChild(sheet);
   openActionSheet = sheet;
+  // Popovers open BELOW the bubble — make sure they're never clipped at the
+  // bottom of the scrollable chat area.
+  sheet.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function closeChatActionSheet() {
@@ -3354,12 +3359,76 @@ function initEventListeners() {
 }
 
 /* ==========================================
+   ANDROID HARDWARE BACK BUTTON
+   ========================================== */
+function setupAndroidBackButton() {
+  if (!window.Capacitor?.isNativePlatform()) return;
+
+  import('@capacitor/app').then(({ App }) => {
+    App.addListener('backButton', () => {
+      // 1) Never interrupt an in-flight video compression
+      const vp = document.getElementById('video-progress-overlay');
+      if (vp && vp.style.display !== 'none') return;
+
+      // 2) Close confirm / nickname modals first (they hold a pending promise)
+      const confirmModal = document.getElementById('custom-confirm-modal');
+      if (confirmModal && confirmModal.style.display === 'flex') {
+        document.getElementById('confirm-modal-cancel')?.click();
+        return;
+      }
+      const nickModal = document.getElementById('nickname-modal');
+      if (nickModal && nickModal.style.display === 'flex') {
+        document.getElementById('nickname-modal-cancel')?.click();
+        return;
+      }
+
+      // 3) Close status / location modals
+      const statusModal = document.getElementById('status-modal');
+      if (statusModal && statusModal.style.display === 'flex') {
+        statusModal.style.display = 'none';
+        return;
+      }
+      const locationModal = document.getElementById('location-modal');
+      if (locationModal && locationModal.style.display === 'flex') {
+        locationModal.style.display = 'none';
+        return;
+      }
+
+      // 4) Close chat popovers: action sheet, reaction picker, emoji picker, search
+      if (openActionSheet || openReactPicker) {
+        closeReactPicker();
+        return;
+      }
+      const emojiPicker = document.getElementById('chat-emoji-picker');
+      if (emojiPicker && emojiPicker.style.display !== 'none') {
+        emojiPicker.style.display = 'none';
+        return;
+      }
+      if (chatSearchMode) {
+        closeChatSearch();
+        return;
+      }
+
+      // 5) Inside a chat → step back to the dashboard (reuse the header back button)
+      if (currentChatFriend) {
+        document.getElementById('chat-back-btn')?.click();
+        return;
+      }
+
+      // 6) Otherwise exit the app
+      App.exitApp();
+    });
+  }).catch((err) => console.warn('[Pulse] Back-button setup failed:', err));
+}
+
+/* ==========================================
    INIT
    ========================================== */
 document.addEventListener('DOMContentLoaded', () => {
   initEmojiPicker();
   initEventListeners();
   registerServiceWorker();
+  setupAndroidBackButton();
   checkNavigationState();
 
   // Stop broadcasting typing when the tab/app is hidden or closed
