@@ -790,14 +790,54 @@ export async function markMessagesAsRead(friendId) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
+  // Reading implies the message was also delivered — set both timestamps
+  const now = new Date().toISOString();
   const { error } = await client()
     .from('messages')
-    .update({ read_at: new Date().toISOString() })
+    .update({ read_at: now, delivered_at: now })
     .eq('recipient_id', user.id)
     .eq('sender_id', friendId)
     .is('read_at', null);
 
   if (error) throw error;
+}
+
+// Mark messages from a friend as delivered (their device received them via
+// realtime) even when the chat isn't open — gives the sender the ✓✓ receipt
+// without them having to read.
+export async function markMessagesAsDelivered(friendId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { error } = await client()
+    .from('messages')
+    .update({ delivered_at: new Date().toISOString() })
+    .eq('recipient_id', user.id)
+    .eq('sender_id', friendId)
+    .is('delivered_at', null);
+
+  if (error) throw error;
+}
+
+// Toggle an emoji reaction on a message. Backed by the security-definer RPC
+// toggle_message_reaction (participant-checked). Returns the new reactions map
+// ({"👍": ["user-uuid", ...]}) or null on failure.
+export async function toggleMessageReaction(messageId, emoji) {
+  if (!messageId || !emoji) return null;
+  try {
+    const { data, error } = await client().rpc('toggle_message_reaction', {
+      target_message_id: messageId,
+      reaction_emoji: emoji
+    });
+    if (error) {
+      console.warn('[Pulse] Reaction toggle failed:', error.message);
+      return null;
+    }
+    return data || null;
+  } catch (e) {
+    console.warn('[Pulse] Reaction toggle error:', e.message);
+    return null;
+  }
 }
 
 /* ==========================================
@@ -979,10 +1019,11 @@ export function subscribeToPulseSync(userId, callback, friendIds = []) {
     )
     .on(
       'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` },
+      { event: 'UPDATE', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
       (payload) => {
-        // A friend marked one of our messages as read → live ✓✓ receipt
-        callback({ type: 'message_read', record: payload.new });
+        // Read/delivered receipts + reactions on messages I sent OR received —
+        // the client patches the bubble in place (no full chat reload)
+        callback({ type: 'message_updated', record: payload.new });
       }
     )
     .on(

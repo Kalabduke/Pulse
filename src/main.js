@@ -26,6 +26,8 @@ import {
   sendDirectMessage,
   fetchDirectMessages,
   markMessagesAsRead,
+  markMessagesAsDelivered,
+  toggleMessageReaction,
   updateLastSeen,
   upsertPrivateStatus,
   fetchPrivateStatusesForMe,
@@ -83,6 +85,11 @@ let chatMessageLimit = 50;      // messages loaded per chat session (grows via "
 let chatPagingUp = false;       // true only while the user is loading earlier messages
 let chatTypingSentAt = 0;       // last time we broadcast "typing…"
 let friendTypingTimer = null;
+let chatMessagesCache = {};     // msg.id → msg for the open chat (in-place realtime patches)
+let openReactPicker = null;     // currently open reaction picker element
+
+// Quick-reaction set shown in the per-message picker
+const REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🔥','🎉','😍','🙏','💯','👏','🤯'];
 
 const cache = {
   connections: null,
@@ -438,18 +445,20 @@ async function setupRealtimeSync() {
     } else if (change.type === 'new_message') {
       const msg = change.record;
       if (currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
-        await loadChatMessages(currentChatFriend.friendId);
-        await markMessagesAsRead(currentChatFriend.friendId);
+        // Chat is open → append the bubble in place, mark delivered + read
+        appendChatMessage(msg);
+        markMessagesAsDelivered(currentChatFriend.friendId).catch(() => {});
+        markMessagesAsRead(currentChatFriend.friendId).catch(() => {});
       } else {
         showToast('New message! 💬');
+        // Device received it → sender gets a ✓✓ delivered receipt immediately
+        if (msg.sender_id) markMessagesAsDelivered(msg.sender_id).catch(() => {});
         invalidateCache();
         await loadDashboardData();
       }
-    } else if (change.type === 'message_read') {
-      // Friend marked one of our messages as read → live ✓✓ receipt
-      if (currentChatFriend && change.record.sender_id === state.userProfile?.id) {
-        await loadChatMessages(currentChatFriend.friendId);
-      }
+    } else if (change.type === 'message_updated') {
+      // Read/delivered receipt or reaction → patch just that bubble, no reload
+      if (currentChatFriend) patchMessageBubble(change.record);
     } else if (change.type === 'typing_updated') {
       handleTypingEvent(change.record, change.eventType);
     } else if (change.type === 'private_status_updated') {
@@ -1077,6 +1086,8 @@ async function openChat(friend) {
   currentChatFriend = friend;
   chatMessageLimit = 50;
   chatPagingUp = false;
+  chatMessagesCache = {};
+  closeReactPicker();
   clearTimeout(friendTypingTimer);
   hideTypingIndicator();
 
@@ -1102,7 +1113,11 @@ async function openChat(friend) {
   }
 
   await loadChatMessages(friend.friendId);
-  await markMessagesAsRead(friend.friendId);
+  // Deliver first, then read — gives the sender both receipts in order.
+  // Best-effort: if the delivered_at column doesn't exist yet (migration not
+  // run), chat must still open — never block on these.
+  markMessagesAsDelivered(friend.friendId).catch(() => {});
+  markMessagesAsRead(friend.friendId).catch(() => {});
 
   friend.unreadCount = 0;
   renderFriendsFeed();
@@ -1125,6 +1140,9 @@ async function loadChatMessages(friendId, limit = chatMessageLimit) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
 
+  // Re-render destroys any open reaction picker — drop the stale reference
+  closeReactPicker();
+
   // Preserve scroll when paging up (loading earlier messages) — NOT on regular reloads
   const wasPaging = chatPagingUp;
   const prevHeight = container.scrollHeight;
@@ -1135,9 +1153,9 @@ async function loadChatMessages(friendId, limit = chatMessageLimit) {
   try {
     const messages = await fetchDirectMessages(friendId, limit);
     const myId = state.userProfile?.id;
-    const friendEmoji = currentChatFriend?.statusEmoji || '😊';
 
     if (messages.length === 0) {
+      chatMessagesCache = {};
       container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
       return;
     }
@@ -1149,78 +1167,22 @@ async function loadChatMessages(friendId, limit = chatMessageLimit) {
 
     const rows = [];
     let lastDayKey = '';
+    chatMessagesCache = {};
 
     messages.forEach(msg => {
-      const isSent = msg.sender_id === myId;
       const d = new Date(msg.created_at);
       const dayKey = d.toDateString();
-      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
       if (dayKey !== lastDayKey) {
         lastDayKey = dayKey;
         rows.push(`<div class="chat-date-sep">${escapeHtml(formatChatDay(d))}</div>`);
       }
 
-      const isVideo = msg.image_url && isVideoUrl(msg.image_url, null);
-      const mediaHtml = msg.image_url
-        ? isVideo
-          ? `<video src="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;" controls playsinline preload="metadata"></video>`
-          : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
-        : '';
-
-      const replyHtml = msg.reply
-        ? `<div class="chat-reply-preview">
-             <span class="chat-reply-bar-line"></span>
-             <span class="chat-reply-text">${escapeHtml(msg.reply?.content_text || (msg.reply?.image_url ? '📎 Media' : ''))}</span>
-           </div>`
-        : '';
-
-      // Read receipts — ✓ delivered, ✓✓ read (only on our own sent messages)
-      const ticks = isSent
-        ? `<span class="chat-tick ${msg.read_at ? 'read' : ''}" title="${msg.read_at ? 'Read' : 'Delivered'}">${msg.read_at ? '✓✓' : '✓'}</span>`
-        : '';
-
-      const avatarHtml = isSent
-        ? ''
-        : `<span class="chat-avatar">${escapeHtml(friendEmoji)}</span>`;
-
-      rows.push(`
-        <div class="chat-row ${isSent ? 'sent' : 'received'}">
-          ${avatarHtml}
-          <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
-            data-content="${escapeHtml(msg.content_text || '')}"
-            data-image="${escapeHtml(msg.image_url || '')}"
-            data-sender="${escapeHtml(msg.sender_id)}">
-            ${replyHtml}
-            ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
-            ${mediaHtml}
-            <div style="display:flex;align-items:center;justify-content:${isSent ? 'flex-end' : 'flex-start'};gap:8px;margin-top:4px;">
-              <span class="chat-bubble-time">${time}</span>
-              ${ticks}
-              <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
-            </div>
-          </div>
-        </div>
-      `);
+      rows.push(buildChatRow(msg, myId));
+      chatMessagesCache[msg.id] = msg;
     });
 
     container.innerHTML = loadMoreHtml + rows.join('');
-
-    // Attach reply button listeners
-    container.querySelectorAll('.chat-reply-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const msgId = btn.dataset.msgId;
-        const bubble = container.querySelector(`[data-msg-id="${msgId}"]`);
-        if (!bubble) return;
-        setReply({
-          id: msgId,
-          content_text: bubble.dataset.content,
-          image_url: bubble.dataset.image,
-          sender_id: bubble.dataset.sender
-        });
-      });
-    });
 
     // Load earlier — fetch more and keep the view anchored
     container.querySelector('.chat-load-more')?.addEventListener('click', async () => {
@@ -1239,6 +1201,237 @@ async function loadChatMessages(friendId, limit = chatMessageLimit) {
   } catch (err) {
     chatPagingUp = false;
     container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
+  }
+}
+
+/* ==========================================
+   CHAT ROW RENDERING — shared by load, append & patch
+   ========================================== */
+function renderTicksHtml(msg) {
+  const fmt = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // 3-state receipt: sent ✓ → delivered ✓✓ → read ✓✓ + time
+  if (msg.read_at) {
+    return `<span class="chat-tick read" title="Read at ${fmt(msg.read_at)}">✓✓</span>`
+         + `<span class="chat-read-time">${fmt(msg.read_at)}</span>`;
+  }
+  if (msg.delivered_at) {
+    return `<span class="chat-tick delivered" title="Delivered at ${fmt(msg.delivered_at)}">✓✓</span>`;
+  }
+  return `<span class="chat-tick" title="Sent at ${fmt(msg.created_at)}">✓</span>`;
+}
+
+function renderReactionsHtml(msg, myId) {
+  const reactions = msg.reactions || {};
+  const entries = Object.entries(reactions)
+    .filter(([, ids]) => Array.isArray(ids) && ids.length > 0);
+  if (entries.length === 0) return '';
+  const pills = entries.map(([emoji, ids]) => {
+    const count = ids.length;
+    const mine = ids.includes(myId);
+    return `<button class="chat-reaction-pill${mine ? ' mine' : ''}" data-msg-id="${escapeHtml(msg.id)}" data-emoji="${escapeHtml(emoji)}" title="${count} reaction${count > 1 ? 's' : ''}${mine ? ' · you' : ''}">${escapeHtml(emoji)} ${count}</button>`;
+  }).join('');
+  return `<div class="chat-reactions">${pills}</div>`;
+}
+
+function buildChatRow(msg, myId) {
+  const isSent = msg.sender_id === myId;
+  const friendEmoji = currentChatFriend?.statusEmoji || '😊';
+  const d = new Date(msg.created_at);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const isVideo = msg.image_url && isVideoUrl(msg.image_url, null);
+  const mediaHtml = msg.image_url
+    ? isVideo
+      ? `<video src="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;" controls playsinline preload="metadata"></video>`
+      : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
+    : '';
+
+  const replyHtml = msg.reply
+    ? `<div class="chat-reply-preview">
+         <span class="chat-reply-bar-line"></span>
+         <span class="chat-reply-text">${escapeHtml(msg.reply?.content_text || (msg.reply?.image_url ? '📎 Media' : ''))}</span>
+       </div>`
+    : '';
+
+  const ticks = isSent ? `<span class="chat-tick-area">${renderTicksHtml(msg)}</span>` : '';
+  const reactionsHtml = renderReactionsHtml(msg, myId);
+  const avatarHtml = isSent ? '' : `<span class="chat-avatar">${escapeHtml(friendEmoji)}</span>`;
+
+  return `
+    <div class="chat-row ${isSent ? 'sent' : 'received'}">
+      ${avatarHtml}
+      <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
+        data-content="${escapeHtml(msg.content_text || '')}"
+        data-image="${escapeHtml(msg.image_url || '')}"
+        data-sender="${escapeHtml(msg.sender_id)}">
+        ${replyHtml}
+        ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
+        ${mediaHtml}
+        <div class="chat-meta">
+          <span class="chat-bubble-time">${time}</span>
+          ${ticks}
+          <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
+          <button class="chat-react-btn" data-msg-id="${escapeHtml(msg.id)}" title="React">🙂</button>
+        </div>
+        ${reactionsHtml}
+      </div>
+    </div>
+  `;
+}
+
+/* ==========================================
+   IN-PLACE REALTIME UPDATES — no full chat reload
+   ========================================== */
+function patchMessageBubble(msg) {
+  const container = document.getElementById('chat-messages');
+  if (!container || !currentChatFriend) return;
+
+  // Only patch messages in the open conversation
+  const isMine = msg.sender_id === state.userProfile?.id;
+  const otherId = isMine ? msg.recipient_id : msg.sender_id;
+  if (otherId !== currentChatFriend.friendId) return;
+
+  // Skip no-op echoes — my own batch read/delivered marking comes back as
+  // one message_updated per row with unchanged reactions, which would churn
+  // the whole list on every chat open. Only re-render when something visible
+  // actually changed (reactions, or a receipt field we display).
+  const cached = chatMessagesCache[msg.id];
+  if (cached) {
+    const reactionsSame = JSON.stringify(cached.reactions || {}) === JSON.stringify(msg.reactions || {});
+    const receiptsSame = cached.read_at === msg.read_at && cached.delivered_at === msg.delivered_at;
+    if (reactionsSame && receiptsSame) return;
+  }
+
+  const bubble = container.querySelector(`[data-msg-id="${CSS.escape(msg.id)}"]`);
+  if (!bubble) return;
+
+  // Keep the cache in sync for future appends/patches
+  chatMessagesCache[msg.id] = { ...(chatMessagesCache[msg.id] || {}), ...msg };
+
+  // 1) Receipt ticks — only for our own sent messages
+  if (isMine) {
+    const tickArea = bubble.querySelector('.chat-tick-area');
+    if (tickArea) tickArea.innerHTML = renderTicksHtml(msg);
+  }
+
+  // 2) Reactions — both sides can react
+  patchReactionsOnly(msg.id, msg.reactions || {});
+}
+
+function patchReactionsOnly(msgId, reactions) {
+  const container = document.getElementById('chat-messages');
+  const bubble = container?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+  if (!bubble) return;
+  const html = renderReactionsHtml({ id: msgId, reactions }, state.userProfile?.id);
+  const old = bubble.querySelector('.chat-reactions');
+  if (old) {
+    old.outerHTML = html;
+  } else if (html) {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    bubble.appendChild(wrap.firstChild);
+  }
+}
+
+// Append a freshly-inserted message bubble without re-rendering the whole chat
+function appendChatMessage(msg) {
+  const container = document.getElementById('chat-messages');
+  if (!container || !currentChatFriend) return;
+
+  const myId = state.userProfile?.id;
+  if (!myId) return;
+
+  // If the container is showing the empty state, clear it first
+  if (!container.querySelector('.chat-row') && container.textContent.includes('No messages yet')) {
+    container.innerHTML = '';
+  }
+
+  // Day separator if the new message lands on a different day than the last one
+  const rows = container.querySelectorAll('.chat-row');
+  const lastRow = rows[rows.length - 1];
+  const lastMsgId = lastRow?.querySelector('.chat-bubble')?.dataset.msgId;
+  const lastMsg = lastMsgId ? chatMessagesCache[lastMsgId] : null;
+  if (lastMsg) {
+    const lastDay = new Date(lastMsg.created_at).toDateString();
+    const msgDay = new Date(msg.created_at).toDateString();
+    if (msgDay !== lastDay) {
+      const sep = document.createElement('div');
+      sep.className = 'chat-date-sep';
+      sep.textContent = formatChatDay(new Date(msg.created_at));
+      container.appendChild(sep);
+    }
+  }
+
+  const wrap = document.createElement('div');
+  wrap.innerHTML = buildChatRow(msg, myId);
+  container.appendChild(wrap.firstChild);
+  chatMessagesCache[msg.id] = msg;
+
+  // Scroll to bottom only if the user was already at/near the bottom
+  const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+  if (nearBottom) container.scrollTop = container.scrollHeight;
+}
+
+/* ==========================================
+   REACTIONS — toggle + quick picker
+   ========================================== */
+async function toggleReaction(msgId, emoji) {
+  const cached = chatMessagesCache[msgId];
+  if (!cached) return;
+  const myId = state.userProfile?.id;
+  if (!myId) return;
+  const original = cached.reactions || {};
+
+  // Optimistic flip so the pill responds instantly
+  const reactions = { ...original };
+  const list = Array.isArray(reactions[emoji]) ? [...reactions[emoji]] : [];
+  const idx = list.indexOf(myId);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(myId);
+  if (list.length) reactions[emoji] = list;
+  else delete reactions[emoji];
+  cached.reactions = reactions;
+  chatMessagesCache[msgId] = cached;
+  patchReactionsOnly(msgId, reactions);
+
+  const result = await toggleMessageReaction(msgId, emoji);
+  if (result) {
+    // Server is source of truth — reconcile (multi-device / dedup)
+    const updated = chatMessagesCache[msgId] || cached;
+    updated.reactions = result;
+    chatMessagesCache[msgId] = updated;
+    patchReactionsOnly(msgId, result);
+  } else {
+    // RPC failed (e.g. SQL not deployed yet) — revert the optimistic flip
+    cached.reactions = original;
+    chatMessagesCache[msgId] = cached;
+    patchReactionsOnly(msgId, original);
+    showToast('Reactions need the new SQL — run the migration.', 'error');
+  }
+}
+
+function toggleReactPicker(msgId, btn) {
+  if (openReactPicker) {
+    if (openReactPicker.dataset.msgId === msgId) {
+      closeReactPicker();
+      return;
+    }
+    closeReactPicker();
+  }
+  const bubble = btn.closest('.chat-bubble');
+  if (!bubble) return;
+  const picker = document.createElement('div');
+  picker.className = 'chat-react-picker';
+  picker.dataset.msgId = msgId;
+  picker.innerHTML = REACTION_EMOJIS.map(e => `<button type="button" data-emoji="${e}">${e}</button>`).join('');
+  bubble.appendChild(picker);
+  openReactPicker = picker;
+}
+
+function closeReactPicker() {
+  if (openReactPicker) {
+    openReactPicker.remove();
+    openReactPicker = null;
   }
 }
 
@@ -2561,6 +2754,59 @@ function initEventListeners() {
   // Chat
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
+  // Delegated chat bubble interactions — survives re-renders (reply + reactions)
+  const chatMessagesEl = document.getElementById('chat-messages');
+  chatMessagesEl?.addEventListener('click', (e) => {
+    // Reaction picker emoji
+    const pickerBtn = e.target.closest('.chat-react-picker button');
+    if (pickerBtn) {
+      e.stopPropagation();
+      const msgId = pickerBtn.closest('.chat-react-picker')?.dataset.msgId;
+      closeReactPicker();
+      if (msgId) toggleReaction(msgId, pickerBtn.dataset.emoji);
+      return;
+    }
+    // Existing reaction pill → toggle it
+    const pill = e.target.closest('.chat-reaction-pill');
+    if (pill) {
+      e.stopPropagation();
+      toggleReaction(pill.dataset.msgId, pill.dataset.emoji);
+      return;
+    }
+    // React (+) button → open quick picker
+    const reactBtn = e.target.closest('.chat-react-btn');
+    if (reactBtn) {
+      e.stopPropagation();
+      toggleReactPicker(reactBtn.dataset.msgId, reactBtn);
+      return;
+    }
+    // Reply button
+    const replyBtn = e.target.closest('.chat-reply-btn');
+    if (replyBtn) {
+      e.stopPropagation();
+      const msgId = replyBtn.dataset.msgId;
+      const bubble = e.currentTarget.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+      if (bubble) {
+        setReply({
+          id: msgId,
+          content_text: bubble.dataset.content,
+          image_url: bubble.dataset.image,
+          sender_id: bubble.dataset.sender
+        });
+      }
+      return;
+    }
+    // Any other click inside the message list closes the picker
+    closeReactPicker();
+  });
+
+  // Clicking anywhere outside an open picker closes it
+  document.addEventListener('click', (e) => {
+    if (openReactPicker && !e.target.closest('.chat-react-picker') && !e.target.closest('.chat-react-btn')) {
+      closeReactPicker();
+    }
+  });
+
   document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
     // Enter = send, Shift+Enter = newline
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
@@ -2681,6 +2927,8 @@ function initEventListeners() {
     if (currentChatFriend?.friendId) setTypingStatus(currentChatFriend.friendId, false);
     clearTimeout(friendTypingTimer);
     hideTypingIndicator();
+    closeReactPicker();
+    chatMessagesCache = {};
     currentChatFriend = null;
     clearReply();
     const picker = document.getElementById('chat-emoji-picker');

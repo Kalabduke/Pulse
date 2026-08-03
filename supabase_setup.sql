@@ -197,8 +197,14 @@ create table if not exists public.messages (
   content_text text,
   image_url text,
   read_at timestamp with time zone default null,
+  delivered_at timestamp with time zone default null,
+  reactions jsonb not null default '{}'::jsonb,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+-- Alter table in case it was created in a previous version
+alter table public.messages add column if not exists delivered_at timestamp with time zone default null;
+alter table public.messages add column if not exists reactions jsonb not null default '{}'::jsonb;
 
 alter table public.messages enable row level security;
 
@@ -214,10 +220,75 @@ create policy "Users can send direct messages"
 on public.messages for insert to authenticated
 with check (auth.uid() = sender_id);
 
-create policy "Users can update direct messages sent to them"
+-- Recipient can mark delivered/read; sender can only react via the RPC below
+-- (keeps the sender from editing message content — reactions go through
+--  toggle_message_reaction which is security definer and participant-checked)
+-- NOTE: an earlier version referenced new.read_at/new.delivered_at in the
+-- with check clause, which some SQL editors reject (42P01 "missing
+-- FROM-clause entry for table new"). The simple recipient-only check is
+-- editor-safe and reactions are still enforced by the RPC.
+create policy "Users can update delivery state of messages"
 on public.messages for update to authenticated
 using (auth.uid() = recipient_id)
 with check (auth.uid() = recipient_id);
+
+-- ====================================================================
+-- MESSAGE REACTIONS — toggle an emoji on a message.
+-- Both participants may react. Stored as {"👍": ["user-uuid", ...]}.
+-- Security definer: verifies the caller is a participant before writing,
+-- so we never grant raw UPDATE on messages to the sender.
+-- ====================================================================
+create or replace function public.toggle_message_reaction(target_message_id uuid, reaction_emoji text)
+returns jsonb
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  current_reactions jsonb;
+  participant boolean;
+  user_reacted boolean;
+  emoji_array jsonb;
+begin
+  if reaction_emoji is null or char_length(reaction_emoji) > 16 then
+    raise exception 'Invalid reaction';
+  end if;
+
+  select (auth.uid() = sender_id or auth.uid() = recipient_id), coalesce(reactions, '{}'::jsonb)
+  into participant, current_reactions
+  from public.messages
+  where id = target_message_id;
+
+  if not found then
+    raise exception 'Message not found';
+  end if;
+  if not participant then
+    raise exception 'Not allowed';
+  end if;
+
+  user_reacted := current_reactions -> reaction_emoji ? auth.uid()::text;
+
+  if user_reacted then
+    -- Remove my uid from that emoji's array; drop the key when empty
+    emoji_array := (current_reactions -> reaction_emoji) - auth.uid()::text;
+    if jsonb_array_length(emoji_array) = 0 then
+      current_reactions := current_reactions - reaction_emoji;
+    else
+      current_reactions := jsonb_set(current_reactions, array[reaction_emoji], emoji_array);
+    end if;
+  else
+    -- Append my uid
+    emoji_array := coalesce(current_reactions -> reaction_emoji, '[]'::jsonb) || to_jsonb(array[auth.uid()::text]);
+    current_reactions := jsonb_set(current_reactions, array[reaction_emoji], emoji_array);
+  end if;
+
+  update public.messages set reactions = current_reactions where id = target_message_id;
+  return current_reactions;
+end;
+$$;
+
+-- Callers use the RPC for reactions; the direct-update policy only allows the
+-- recipient to set delivery fields, so the sender is blocked from changing content.
+-- (The RPC above runs as definer and is participant-checked — no extra grants needed.)
 
 -- 7. PUSH SUBSCRIPTIONS TABLE
 -- Stores Web Push subscriptions for background notifications

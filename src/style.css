@@ -952,14 +952,53 @@ body {
   margin: 4px 0;
 }
 
+/* Bubble needs relative positioning so the reaction picker can anchor to it */
+.chat-bubble {
+  position: relative;
+}
+
+/* 3-state delivery ticks: sent ✓ → delivered ✓✓ → read ✓✓ + time */
+.chat-tick-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .chat-tick {
   font-size: 11px;
   color: hsl(var(--text-muted));
   font-weight: 600;
 }
 
+.chat-tick.delivered {
+  color: #a5b4fc;
+}
+
 .chat-tick.read {
   color: #4ade80;
+}
+
+.chat-read-time {
+  font-size: 10px;
+  color: #4ade80;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+/* Meta row — time + ticks + reply + react, aligned per bubble side */
+.chat-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.chat-row.sent .chat-meta {
+  justify-content: flex-end;
+}
+
+.chat-row.received .chat-meta {
+  justify-content: flex-start;
 }
 
 .chat-bubble img {
@@ -973,8 +1012,106 @@ body {
 .chat-bubble-time {
   font-size: 10px;
   opacity: 0.7;
-  margin-top: 4px;
   display: block;
+}
+
+/* ==========================================
+   CHAT REACTIONS
+   ========================================== */
+.chat-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.chat-reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-glow);
+  color: hsl(var(--text-primary));
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  touch-action: manipulation;
+}
+
+.chat-reaction-pill:hover {
+  background: rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+}
+
+.chat-reaction-pill.mine {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.55);
+}
+
+/* Small react (+) button inside the meta row */
+.chat-react-btn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  color: hsl(var(--text-muted));
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
+.chat-bubble:hover .chat-react-btn,
+.chat-bubble:active .chat-react-btn {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chat-react-btn {
+    opacity: 0.6;
+  }
+}
+
+/* Quick-reaction picker popup */
+.chat-react-picker {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  max-width: 210px;
+  padding: 8px;
+  background: #19142b;
+  border: 1px solid var(--border-glow);
+  border-radius: 14px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  z-index: 40;
+  animation: fadeIn 0.15s ease;
+}
+
+.chat-react-picker button {
+  font-size: 19px;
+  line-height: 1.2;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: transform 0.1s, background 0.1s;
+  touch-action: manipulation;
+}
+
+.chat-react-picker button:hover {
+  transform: scale(1.3);
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .chat-input-area {
