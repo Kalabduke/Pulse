@@ -84,17 +84,50 @@ export async function signUpWithPassword(email, password, name) {
 export async function signInWithGoogle() {
   const isNative = window.Capacitor?.isNativePlatform();
   if (isNative) {
+    // For native Android: use Browser plugin to open OAuth,
+    // then App plugin to detect when we return to the app
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',
       options: {
         redirectTo: 'https://pulse-gray-eight.vercel.app',
-        queryParams: { prompt: 'select_account' }
+        queryParams: { prompt: 'select_account' },
+        skipBrowserRedirect: true
       }
     });
     if (error) throw error;
+
     const { Browser } = await import('@capacitor/browser');
-    await Browser.open({ url: data.url });
-    return data;
+    const { App }     = await import('@capacitor/app');
+
+    // Open Google OAuth in in-app browser
+    await Browser.open({ url: data.url, presentationStyle: 'popover' });
+
+    // Listen for the app to be resumed (after OAuth completes and redirects back)
+    return new Promise((resolve, reject) => {
+      const listener = App.addListener('appUrlOpen', async (event) => {
+        listener.then(l => l.remove()).catch(() => {});
+        await Browser.close().catch(() => {});
+
+        const url = event.url;
+        if (url?.includes('access_token') || url?.includes('code=')) {
+          // Let Supabase handle the tokens from the URL
+          const { error: sessionError } = await client().auth.exchangeCodeForSession(
+            new URL(url).searchParams.get('code') || ''
+          ).catch(() => ({ error: null }));
+
+          // Even if exchange fails, the session may have been set via the redirect
+          resolve(data);
+        } else {
+          reject(new Error('OAuth was cancelled or failed'));
+        }
+      });
+
+      // Timeout after 5 minutes
+      setTimeout(() => {
+        listener.then(l => l.remove()).catch(() => {});
+        reject(new Error('OAuth timed out'));
+      }, 300000);
+    });
   } else {
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',

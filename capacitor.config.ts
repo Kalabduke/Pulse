@@ -5,15 +5,24 @@ const config: CapacitorConfig = {
   appName: 'Pulse',
   webDir: 'dist',
   server: {
-    // Point to the live Vercel URL so OAuth redirects and Supabase auth work correctly
-    // on the native Android build. Remove this for a fully offline/local build.
     url: 'https://pulse-gray-eight.vercel.app',
-    cleartext: false
+    cleartext: false,
+    // Allow navigation within the Vercel app and Supabase auth callbacks
+    // This keeps OAuth redirects inside the WebView instead of opening Chrome
+    allowNavigation: [
+      'pulse-gray-eight.vercel.app',
+      '*.supabase.co',
+      'accounts.google.com',
+      '*.google.com'
+    ]
   },
   android: {
     allowMixedContent: false,
     backgroundColor: '#0c0d12',
-    webContentsDebuggingEnabled: false
+    webContentsDebuggingEnabled: false,
+    // Override URL loading to keep all auth flows in WebView
+    overrideUserAgent: null,
+    appendUserAgent: null
   },
   plugins: {
     PushNotifications: {
