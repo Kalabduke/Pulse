@@ -93,6 +93,11 @@ let chatTypingSentAt = 0;       // last time we broadcast "typing…"
 let friendTypingTimer = null;
 let chatMessagesCache = {};     // msg.id → msg for the open chat (in-place realtime patches)
 let openReactPicker = null;     // currently open reaction picker element
+let openActionSheet = null;     // currently open bubble action sheet element
+let longPressTimer = null;      // long-press timer for the reaction picker
+let longPressTarget = null;     // bubble being long-pressed
+let longPressFired = false;     // long-press fired → suppress the follow-up tap
+let toastChatFriend = null;     // friendId to open when the toast is tapped
 let chatSearchMode = false;     // search bar + results overlay active
 
 // Quick-reaction set shown in the per-message picker
@@ -223,9 +228,33 @@ function showToast(text, type = 'success') {
   clearTimeout(toastTimer);
   // Errors stay longer so user can read them
   const duration = type === 'error' ? 6000 : 4000;
+  toastChatFriend = null; // a plain toast must not open the previous DM chat
+  toast.style.cursor = '';
+  toast.style.pointerEvents = 'none'; // base toast is display-only
   toastTimer = setTimeout(() => {
     toast.className = 'toast';
   }, duration);
+}
+
+// DM in-app notification — tappable toast that opens the chat
+function showDmToast(friendId, title, body) {
+  const toast = document.getElementById('global-toast');
+  const textEl = document.getElementById('toast-text');
+  const iconEl = document.getElementById('toast-icon');
+  if (!toast || !textEl || !iconEl) return;
+  toastChatFriend = friendId || null;
+  textEl.textContent = `${title}: ${body}`;
+  iconEl.textContent = '💬';
+  toast.className = 'toast show toast-info';
+  toast.style.cursor = friendId ? 'pointer' : '';
+  // DM toasts are tappable — re-enable pointer events (base toast is display-only)
+  toast.style.pointerEvents = friendId ? 'auto' : 'none';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.className = 'toast';
+    toast.style.pointerEvents = 'none';
+    toastChatFriend = null;
+  }, 6000);
 }
 
 /* ==========================================
@@ -457,7 +486,14 @@ async function setupRealtimeSync() {
         markMessagesAsDelivered(currentChatFriend.friendId).catch(() => {});
         markMessagesAsRead(currentChatFriend.friendId).catch(() => {});
       } else {
-        showToast('New message! 💬');
+        // In-app DM notification — sender name + preview, tap to open the chat
+        const sender = (state.connections || []).find(c => c.friendId === msg.sender_id);
+        const senderName = sender?.displayName || sender?.name || 'A friend';
+        const senderEmoji = sender?.statusEmoji || '💬';
+        const preview = msg.content_text
+          ? (msg.content_text.length > 50 ? msg.content_text.slice(0, 50) + '…' : msg.content_text)
+          : (msg.image_url ? '📎 Photo' : 'New message');
+        showDmToast(msg.sender_id, `${senderEmoji} ${senderName}`, preview);
         // Device received it → sender gets a ✓✓ delivered receipt immediately
         if (msg.sender_id) markMessagesAsDelivered(msg.sender_id).catch(() => {});
         invalidateCache();
@@ -1280,19 +1316,18 @@ function buildChatRow(msg, myId) {
   return `
     <div class="chat-row ${isSent ? 'sent' : 'received'}">
       ${avatarHtml}
-      <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
-        data-content="${escapeHtml(msg.content_text || '')}"
-        data-image="${escapeHtml(msg.image_url || '')}"
-        data-sender="${escapeHtml(msg.sender_id)}">
-        ${replyHtml}
-        ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
-        ${mediaHtml}
-        <div class="chat-meta">
-          <span class="chat-bubble-time">${time}</span>
-          ${ticks}
-          <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></button>
-          <button class="chat-react-btn" data-msg-id="${escapeHtml(msg.id)}" title="React"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" x2="9.01" y1="9" y2="9"/><line x1="15" x2="15.01" y1="9" y2="9"/></svg></button>
-          ${isSent ? `<button class="chat-del-btn" data-msg-id="${escapeHtml(msg.id)}" title="Delete message"><svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>` : ''}
+      <div class="chat-col">
+        <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
+          data-content="${escapeHtml(msg.content_text || '')}"
+          data-image="${escapeHtml(msg.image_url || '')}"
+          data-sender="${escapeHtml(msg.sender_id)}">
+          ${replyHtml}
+          ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
+          ${mediaHtml}
+          <div class="chat-meta">
+            <span class="chat-bubble-time">${time}</span>
+            ${ticks}
+          </div>
         </div>
         ${reactionsHtml}
       </div>
@@ -1343,14 +1378,17 @@ function patchReactionsOnly(msgId, reactions) {
   const container = document.getElementById('chat-messages');
   const bubble = container?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
   if (!bubble) return;
+  // Reactions live in the row's .chat-col (sibling of the bubble) since the
+  // chat-col restructure — target that, falling back to the bubble for safety.
+  const host = bubble.closest('.chat-col') || bubble;
   const html = renderReactionsHtml({ id: msgId, reactions }, state.userProfile?.id);
-  const old = bubble.querySelector('.chat-reactions');
+  const old = host.querySelector('.chat-reactions');
   if (old) {
     old.outerHTML = html;
   } else if (html) {
     const wrap = document.createElement('div');
     wrap.innerHTML = html;
-    bubble.appendChild(wrap.firstChild);
+    host.appendChild(wrap.firstChild);
   }
 }
 
@@ -1432,13 +1470,11 @@ async function toggleReaction(msgId, emoji) {
 }
 
 function toggleReactPicker(msgId, btn) {
-  if (openReactPicker) {
-    if (openReactPicker.dataset.msgId === msgId) {
-      closeReactPicker();
-      return;
-    }
+  if (openReactPicker?.dataset.msgId === msgId) {
     closeReactPicker();
+    return;
   }
+  closeReactPicker();
   const bubble = btn.closest('.chat-bubble');
   if (!bubble) return;
   const picker = document.createElement('div');
@@ -1454,6 +1490,62 @@ function closeReactPicker() {
     openReactPicker.remove();
     openReactPicker = null;
   }
+  if (openActionSheet) {
+    openActionSheet.remove();
+    openActionSheet = null;
+  }
+}
+
+/* ==========================================
+   CHAT ACTION SHEET — tap a bubble → Reply / Copy / Delete
+   ========================================== */
+function showChatActionSheet(msgId, bubble) {
+  if (openActionSheet?.dataset.msgId === msgId) {
+    closeReactPicker();
+    return;
+  }
+  closeReactPicker();
+
+  const isSent = bubble.classList.contains('sent');
+  const hasText = !!bubble.dataset.content;
+  const hasImage = !!bubble.dataset.image;
+
+  const sheet = document.createElement('div');
+  sheet.className = 'chat-action-sheet';
+  sheet.dataset.msgId = msgId;
+  sheet.innerHTML = `
+    <button type="button" class="chat-action-btn" data-action="reply" data-msg-id="${escapeHtml(msgId)}">
+      <svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg> Reply
+    </button>
+    ${hasText || hasImage ? `<button type="button" class="chat-action-btn" data-action="copy" data-msg-id="${escapeHtml(msgId)}">
+      <svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy</button>` : ''}
+    ${isSent ? `<button type="button" class="chat-action-btn danger" data-action="delete" data-msg-id="${escapeHtml(msgId)}">
+      <svg class="icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Delete</button>` : ''}
+  `;
+  bubble.appendChild(sheet);
+  openActionSheet = sheet;
+}
+
+function closeChatActionSheet() {
+  if (openActionSheet) {
+    openActionSheet.remove();
+    openActionSheet = null;
+  }
+}
+
+function copyMessageText(msgId) {
+  const bubble = document.querySelector(`#chat-messages .chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
+  if (!bubble) return;
+  const text = bubble.dataset.content || (bubble.dataset.image ? bubble.dataset.image : '');
+  if (!text) return;
+  navigator.clipboard?.writeText(text)
+    .then(() => showToast('Copied to clipboard! 📋'))
+    .catch(() => {});
+}
+
+function clearChatLongPress() {
+  if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+  longPressTarget = null;
 }
 
 /* ==========================================
@@ -2334,8 +2426,10 @@ async function registerFCMToken() {
   }
 }
 
-function requestNotificationPermission() {
+function requestNotificationPermission(force = false) {
   if (!('Notification' in window) || Notification.permission !== 'default') return;
+  // Retain the user's choice — don't nag on every launch
+  if (!force && localStorage.getItem('pulse_notif_choice')) return;
 
   const dashboard = document.getElementById('dashboard-view');
   if (!dashboard) return;
@@ -2362,6 +2456,7 @@ function requestNotificationPermission() {
     e.stopPropagation();
     const permission = await Notification.requestPermission();
     banner.remove();
+    localStorage.setItem('pulse_notif_choice', permission === 'granted' ? 'granted' : 'denied');
     if (permission === 'granted') {
       showToast('Notifications enabled! 🔔');
       await subscribeToPushNotifications();
@@ -2382,6 +2477,7 @@ function requestNotificationPermission() {
 
   banner.querySelector('.notif-banner-dismiss').addEventListener('click', (e) => {
     e.stopPropagation();
+    localStorage.setItem('pulse_notif_choice', 'dismissed');
     banner.remove();
   });
 
@@ -2462,6 +2558,16 @@ function notifyFriendStatusUpdate(friendName, emoji, statusText, userId = '') {
    ========================================== */
 function initEventListeners() {
 
+  // Tap a DM notification toast → open that chat
+  document.getElementById('global-toast')?.addEventListener('click', () => {
+    if (!toastChatFriend) return;
+    const friend = (state.connections || []).find(c => c.friendId === toastChatFriend);
+    toastChatFriend = null;
+    const toast = document.getElementById('global-toast');
+    if (toast) { toast.className = 'toast'; toast.style.cursor = ''; toast.style.pointerEvents = 'none'; }
+    if (friend) openChat(friend);
+  });
+
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const url = document.getElementById('config-url')?.value.trim();
     const key = document.getElementById('config-key')?.value.trim();
@@ -2520,6 +2626,11 @@ function initEventListeners() {
   document.getElementById('btn-google-auth')?.addEventListener('click', async () => {
     try {
       await signInWithGoogle();
+      // Native: OAuth completed and returned to the app — resume the session now.
+      // Web: the page navigated to Google and back, session is picked up on load.
+      if (window.Capacitor?.isNativePlatform()) {
+        await checkNavigationState();
+      }
     } catch (err) {
       showAuthError(err.message);
     }
@@ -2938,43 +3049,67 @@ function initEventListeners() {
       toggleReaction(pill.dataset.msgId, pill.dataset.emoji);
       return;
     }
-    // React (+) button → open quick picker
-    const reactBtn = e.target.closest('.chat-react-btn');
-    if (reactBtn) {
+    // Action sheet buttons → Reply / Copy / Delete
+    const actionBtn = e.target.closest('.chat-action-btn');
+    if (actionBtn) {
       e.stopPropagation();
-      toggleReactPicker(reactBtn.dataset.msgId, reactBtn);
-      return;
-    }
-    // Delete button → confirm + delete
-    const delBtn = e.target.closest('.chat-del-btn');
-    if (delBtn) {
-      e.stopPropagation();
-      confirmDeleteMessage(delBtn.dataset.msgId);
-      return;
-    }
-    // Reply button
-    const replyBtn = e.target.closest('.chat-reply-btn');
-    if (replyBtn) {
-      e.stopPropagation();
-      const msgId = replyBtn.dataset.msgId;
-      const bubble = e.currentTarget.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
-      if (bubble) {
-        setReply({
-          id: msgId,
-          content_text: bubble.dataset.content,
-          image_url: bubble.dataset.image,
-          sender_id: bubble.dataset.sender
-        });
+      const msgId = actionBtn.dataset.msgId;
+      const action = actionBtn.dataset.action;
+      closeChatActionSheet();
+      if (action === 'reply') {
+        const bubble = e.currentTarget.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
+        if (bubble) {
+          setReply({
+            id: msgId,
+            content_text: bubble.dataset.content,
+            image_url: bubble.dataset.image,
+            sender_id: bubble.dataset.sender
+          });
+        }
+      } else if (action === 'copy') {
+        copyMessageText(msgId);
+      } else if (action === 'delete') {
+        confirmDeleteMessage(msgId);
       }
       return;
     }
-    // Any other click inside the message list closes the picker
+    // Tap on a bubble (not on image/video/link) → open the action sheet
+    const bubble = e.target.closest('.chat-bubble');
+    if (bubble && !e.target.closest('img, video, a')) {
+      e.stopPropagation();
+      if (longPressFired) { longPressFired = false; return; } // long-press just handled it
+      showChatActionSheet(bubble.dataset.msgId, bubble);
+      return;
+    }
+    // Any other click inside the message list closes popovers
     closeReactPicker();
   });
 
-  // Clicking anywhere outside an open picker closes it
+  // Long-press a bubble → quick reaction picker (touch + mouse)
+  chatMessagesEl?.addEventListener('pointerdown', (e) => {
+    longPressFired = false; // clear any stale suppression from a missed click
+    const bubble = e.target.closest('.chat-bubble');
+    if (!bubble || e.target.closest('button, a, img, video, .chat-reaction-pill, .chat-action-sheet, .chat-react-picker')) return;
+    longPressTarget = bubble;
+    longPressTimer = setTimeout(() => {
+      longPressFired = true;
+      toggleReactPicker(bubble.dataset.msgId, bubble);
+      clearChatLongPress();
+    }, 450);
+  });
+  chatMessagesEl?.addEventListener('pointerup', clearChatLongPress);
+  chatMessagesEl?.addEventListener('pointercancel', clearChatLongPress);
+  chatMessagesEl?.addEventListener('pointermove', (e) => {
+    if (longPressTimer && longPressTarget && !e.target.closest('.chat-bubble')) clearChatLongPress();
+  });
+  chatMessagesEl?.addEventListener('pointerleave', clearChatLongPress);
+
+  // Clicking anywhere outside an open popover closes it
   document.addEventListener('click', (e) => {
-    if (openReactPicker && !e.target.closest('.chat-react-picker') && !e.target.closest('.chat-react-btn')) {
+    if (openReactPicker && !e.target.closest('.chat-react-picker') && !e.target.closest('.chat-bubble')) {
+      closeReactPicker();
+    }
+    if (openActionSheet && !e.target.closest('.chat-action-sheet') && !e.target.closest('.chat-bubble')) {
       closeReactPicker();
     }
   });
@@ -3169,6 +3304,21 @@ function initEventListeners() {
   // Location sharing — Save-based flow
   document.getElementById('btn-location')?.addEventListener('click', () => {
     openLocationModal();
+  });
+
+  // Notification bell — re-open the permission request / show status
+  document.getElementById('btn-notif')?.addEventListener('click', () => {
+    if (!('Notification' in window)) {
+      showToast('Notifications not supported in this browser.', 'error');
+      return;
+    }
+    if (Notification.permission === 'granted') {
+      showToast('Notifications are on 🔔');
+    } else if (Notification.permission === 'denied') {
+      showToast('Notifications are blocked by the browser. Enable them in site settings.', 'error');
+    } else {
+      requestNotificationPermission(true);
+    }
   });
 
   document.getElementById('btn-close-location-modal')?.addEventListener('click', () => {

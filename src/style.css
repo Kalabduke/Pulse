@@ -13,8 +13,8 @@
   --bg-glass: rgba(28, 23, 52, 0.74);
 
   --text-primary: 0 0% 99%;
-  --text-secondary: 245 18% 78%;
-  --text-muted: 246 16% 57%;
+  --text-secondary: 245 20% 82%;
+  --text-muted: 246 20% 66%;
 
   --border-glow: rgba(255, 255, 255, 0.13);
   --border-subtle: rgba(255, 255, 255, 0.07);
@@ -752,6 +752,11 @@ body {
   opacity: 1;
 }
 
+/* Toast variants — subtle colored borders for quick recognition */
+.toast-success { border-color: rgba(34, 197, 94, 0.5); }
+.toast-error   { border-color: rgba(239, 68, 68, 0.6); }
+.toast-info    { border-color: rgba(99, 102, 241, 0.55); }
+
 /* ==========================================
    ONLINE / OFFLINE INDICATOR
    ========================================== */
@@ -968,6 +973,24 @@ body {
   justify-content: flex-start;
 }
 
+/* Column wrapper: bubble on top, reactions pill-row beneath — nothing covers it */
+.chat-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 80%;
+  min-width: 0;
+  position: relative;
+}
+
+.chat-col .chat-bubble {
+  max-width: 100%;
+}
+
+.chat-row.sent .chat-col {
+  align-items: flex-end;
+}
+
 .chat-avatar {
   width: 30px;
   height: 30px;
@@ -1033,10 +1056,10 @@ body {
 }
 
 .chat-read-time {
-  font-size: 10px;
+  font-size: 11px;
   color: #4ade80;
-  font-weight: 500;
-  opacity: 0.9;
+  font-weight: 600;
+  opacity: 1;
 }
 
 /* Meta row — time + ticks + reply + react, aligned per bubble side */
@@ -1064,9 +1087,23 @@ body {
 }
 
 .chat-bubble-time {
-  font-size: 10px;
-  opacity: 0.7;
+  font-size: 11px;
+  opacity: 0.85;
   display: block;
+}
+
+/* Sent bubbles sit on the indigo gradient — keep meta text bright */
+.chat-bubble.sent .chat-tick:not(.delivered):not(.read) {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chat-bubble.sent .chat-reply-preview {
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.chat-bubble.sent .chat-reply-bar-line {
+  background: rgba(255, 255, 255, 0.85);
 }
 
 /* ==========================================
@@ -1076,8 +1113,15 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 6px;
+  margin-top: 4px;
   align-items: center;
+  position: relative;
+  z-index: 2;
+  padding: 0 6px;
+}
+
+.chat-row.sent .chat-reactions {
+  justify-content: flex-end;
 }
 
 .chat-reaction-pill {
@@ -1107,32 +1151,6 @@ body {
   border-color: rgba(99, 102, 241, 0.55);
 }
 
-/* Small react (+) button inside the meta row */
-.chat-react-btn {
-  background: none;
-  border: none;
-  font-size: 13px;
-  cursor: pointer;
-  color: hsl(var(--text-muted));
-  padding: 2px 4px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
-  touch-action: manipulation;
-  flex-shrink: 0;
-}
-
-.chat-bubble:hover .chat-react-btn,
-.chat-bubble:active .chat-react-btn {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .chat-react-btn {
-    opacity: 0.6;
-  }
-}
-
 /* Quick-reaction picker popup */
 .chat-react-picker {
   position: absolute;
@@ -1149,6 +1167,78 @@ body {
   box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
   z-index: 40;
   animation: fadeIn 0.15s ease;
+}
+
+/* Sent bubbles anchor the picker to the right edge */
+.chat-bubble.sent .chat-react-picker {
+  left: auto;
+  right: 0;
+}
+
+/* ==========================================
+   CHAT ACTION SHEET — tap a bubble for Reply / Copy / Delete
+   ========================================== */
+.chat-action-sheet {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 6px;
+  background: #19142b;
+  border: 1px solid var(--border-glow);
+  border-radius: 14px;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  animation: fadeIn 0.15s ease;
+}
+
+.chat-bubble.sent .chat-action-sheet {
+  left: auto;
+  right: 0;
+}
+
+.chat-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--text-primary));
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s ease;
+  touch-action: manipulation;
+}
+
+.chat-action-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.chat-action-btn.danger {
+  color: #f87171;
+}
+
+.chat-action-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.chat-action-btn svg {
+  flex-shrink: 0;
+}
+
+/* Prevent text selection on long-press so the reaction picker feels native */
+.chat-bubble {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .chat-react-picker button {
@@ -1235,13 +1325,22 @@ body {
   border-color: hsl(var(--primary));
 }
 
+/* Placeholders must be visible on the dark theme */
+.input-field::placeholder,
+.chat-text-input::placeholder,
+.chat-search-input::placeholder {
+  color: hsl(var(--text-muted));
+  opacity: 0.85;
+}
+
 .chat-media-btn {
   width: 40px;
   height: 40px;
   border-radius: 20px;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.06);
   border: 1px solid var(--border-glow);
   font-size: 18px;
+  color: hsl(var(--text-primary));
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1729,63 +1828,6 @@ body {
   flex: 1;
 }
 
-/* Reply button on each bubble */
-.chat-reply-btn {
-  background: none;
-  border: none;
-  font-size: 13px;
-  cursor: pointer;
-  color: hsl(var(--text-muted));
-  padding: 2px 4px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
-  touch-action: manipulation;
-  flex-shrink: 0;
-}
-
-.chat-bubble:hover .chat-reply-btn,
-.chat-bubble:active .chat-reply-btn {
-  opacity: 1;
-}
-
-/* Always visible on touch devices */
-@media (hover: none) {
-  .chat-reply-btn {
-    opacity: 0.6;
-  }
-}
-
-/* Delete button on own bubbles */
-.chat-del-btn {
-  background: none;
-  border: none;
-  font-size: 13px;
-  cursor: pointer;
-  color: hsl(var(--text-muted));
-  padding: 2px 4px;
-  border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-  touch-action: manipulation;
-  flex-shrink: 0;
-}
-
-.chat-bubble:hover .chat-del-btn,
-.chat-bubble:active .chat-del-btn {
-  opacity: 1;
-}
-
-.chat-del-btn:hover {
-  color: #ef4444;
-}
-
-@media (hover: none) {
-  .chat-del-btn {
-    opacity: 0.6;
-  }
-}
-
 /* Chat header action buttons (search + background) */
 .chat-header-actions {
   display: flex;
@@ -1805,7 +1847,8 @@ body {
 
 .chat-search-icon {
   font-size: 14px;
-  opacity: 0.7;
+  opacity: 0.95;
+  color: hsl(var(--text-secondary));
 }
 
 .chat-search-input {

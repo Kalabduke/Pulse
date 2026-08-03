@@ -85,7 +85,10 @@ export async function signInWithGoogle() {
     const { data, error } = await client().auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://pulse-gray-eight.vercel.app',
+        // Deep-link back INTO the app via the custom scheme registered in
+        // AndroidManifest.xml — NOT the web app, so the browser hands off
+        // the callback to the app instead of opening Pulse on the web.
+        redirectTo: 'com.pulse.statusapp://login-callback',
         queryParams: { prompt: 'select_account' },
         skipBrowserRedirect: true
       }
@@ -104,23 +107,36 @@ export async function signInWithGoogle() {
         listener.then(l => l.remove()).catch(() => {});
         await Browser.close().catch(() => {});
 
-        const url = event.url;
-        if (url?.includes('access_token') || url?.includes('code=')) {
-          // Let Supabase handle the tokens from the URL
-          const { error: sessionError } = await client().auth.exchangeCodeForSession(
-            new URL(url).searchParams.get('code') || ''
-          ).catch(() => ({ error: null }));
-
-          // Even if exchange fails, the session may have been set via the redirect
+        const url = event.url || '';
+        try {
+          // PKCE flow hands back ?code=... ; implicit flow uses #access_token=...
+          if (url.includes('code=')) {
+            const code = new URL(url).searchParams.get('code') || '';
+            const { error: exError } = await client().auth.exchangeCodeForSession(code);
+            if (exError) throw exError;
+          } else if (url.includes('access_token=')) {
+            const hash = url.includes('#') ? url.split('#')[1] : url.split('?')[1] || '';
+            const params = new URLSearchParams(hash);
+            const accessToken = params.get('access_token') || '';
+            const refreshToken = params.get('refresh_token') || '';
+            const { error: ssError } = await client().auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken
+            });
+            if (ssError) throw ssError;
+          } else {
+            throw new Error('OAuth was cancelled or failed');
+          }
           resolve(data);
-        } else {
-          reject(new Error('OAuth was cancelled or failed'));
+        } catch (err) {
+          reject(err);
         }
       });
 
       // Timeout after 5 minutes
       setTimeout(() => {
         listener.then(l => l.remove()).catch(() => {});
+        Browser.close().catch(() => {}); // don't leave the Custom Tab lingering
         reject(new Error('OAuth timed out'));
       }, 300000);
     });
