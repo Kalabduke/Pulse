@@ -88,7 +88,7 @@ pulse/
 ├── index.html                  # Main HTML — all views/screens
 ├── vite.config.js              # Vite build configuration
 ├── vercel.json                 # Vercel deployment + headers config
-├── netlify.toml                # Netlify config (alternative host)
+
 ├── package.json                # Dependencies and scripts
 ├── .gitignore                  # Files excluded from Git
 ├── supabase_setup.sql          # Full database setup script

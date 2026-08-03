@@ -4,12 +4,15 @@ dist/
 .env.local
 .DS_Store
 *.log
+# Freebuff desktop local data — never commit
+.freebuff/
+supabase/.temp/
 # Keep android folder but ignore build outputs
 android/app/build/
 android/.gradle/
 android/local.properties
-# Firebase service account — never commit this
+# Firebase service account + app config — never commit this
 android/*.json
-!android/app/google-services.json
+android/app/google-services.json
 # Keys reference file — never commit
 KEYS.md

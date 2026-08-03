@@ -14,9 +14,6 @@ export default defineConfig({
       input: { main: 'index.html' }
     }
   },
-  optimizeDeps: {
-    exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util']
-  },
   define: {
     // Bake credentials into the build — safe for client-side (protected by RLS)
     'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(

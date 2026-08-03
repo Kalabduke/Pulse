@@ -35,6 +35,8 @@ import {
   stopLocationShare,
   fetchActiveLocationShares,
   fetchMyActiveShares,
+  setTypingStatus,
+  deleteStatusImage,
   client
 } from './supabase.js';
 
@@ -60,7 +62,6 @@ const state = {
   selectedEmoji: '😊',
   realtimeChannel: null,
   authMode: 'signin',
-  clockInterval: null,
   pollInterval: null,
   privateStatuses: {},
   privateSentByMe: {},
@@ -76,10 +77,16 @@ let currentChatImage = null;
 let currentChatFriend = null;
 let currentReplyTo = null; // { id, content_text, image_url, sender_id }
 
+// Chat pagination + typing state
+let chatMessageLimit = 50;      // messages loaded per chat session (grows via "Load earlier")
+let chatPagingUp = false;       // true only while the user is loading earlier messages
+let chatTypingSentAt = 0;       // last time we broadcast "typing…"
+let friendTypingTimer = null;
+
 const cache = {
   connections: null,
   connectionsAt: 0,
-  TTL: 45000  // 45s cache — reduces DB calls on slow connections
+  TTL: 180000  // 3 min cache — reduces DB calls on slow connections
 };
 
 function getCachedConnections() {
@@ -113,6 +120,7 @@ function isOnline(lastSeenTimestamp) {
 function startHeartbeat() {
   updateLastSeen().catch(() => {});
   setInterval(() => {
+    // Only ping when tab is visible — saves battery and DB writes
     if (document.visibilityState === 'visible') {
       updateLastSeen().catch(() => {});
     }
@@ -152,6 +160,32 @@ function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) 
       img.src = e.target.result;
     };
     reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// Downscale an image file and return a compressed JPEG data URL.
+// Used for chat backgrounds so we don't blow the ~5MB localStorage quota.
+function compressImageToDataUrl(file, maxWidth = 900, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      return reject(new Error('Only images are allowed.'));
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => reject(new Error('Could not read image.'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('Could not read file.'));
     reader.readAsDataURL(file);
   });
 }
@@ -209,14 +243,14 @@ async function checkNavigationState() {
       state.userProfile = profile;
       state.selectedEmoji = profile.status_emoji || '😊';
       navigateTo('dashboard');
-      setupRealtimeSync();
       await loadDashboardData();
-      startSimulatorClock();
+      setupRealtimeSync();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
       setTimeout(registerFCMToken, 4000);
       startHeartbeat();
       resumeLocationSharing();
+      handleDeepLinks();
     } else {
       navigateTo('auth');
       setAuthMode('signin');
@@ -225,6 +259,57 @@ async function checkNavigationState() {
     console.error('[Pulse] Navigation check error:', err);
     navigateTo('auth');
     setAuthMode('signin');
+  }
+}
+
+/* ==========================================
+   DEEP LINKS (?invite=, ?action=)
+   ========================================== */
+let _inviteHandled = false;
+
+function handleDeepLinks() {
+  const params = new URLSearchParams(_savedSearch);
+
+  // PWA shortcut: /?action=update-status → open status modal directly
+  if (params.get('action') === 'update-status') {
+    setTimeout(() => document.getElementById('btn-open-status-modal')?.click(), 500);
+    const clean = new URLSearchParams(_savedSearch);
+    clean.delete('action');
+    const qs = clean.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+  }
+
+  // Invite link: /?invite=<pulseId> → auto-send a connection request
+  const inviteId = params.get('invite');
+  if (inviteId && !_inviteHandled) {
+    _inviteHandled = true;
+    handleInviteLink(inviteId);
+  }
+}
+
+async function handleInviteLink(friendId) {
+  const myId = state.userProfile?.id;
+  if (!friendId || !myId) return;
+
+  // Already connected?
+  const existing = state.connections.find(c => c.friendId === friendId);
+  if (existing) {
+    showToast(existing.status === 'connected'
+      ? 'Already connected with this friend! ✅'
+      : 'Invite already pending for this friend.');
+    return;
+  }
+
+  try {
+    await sendConnectionRequest(friendId);
+    showToast('Connected via invite! ✨');
+    await loadDashboardData();
+    const clean = new URLSearchParams(_savedSearch);
+    clean.delete('invite');
+    const qs = clean.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
+  } catch (err) {
+    showToast(err.message || 'Could not connect via invite.', 'error');
   }
 }
 
@@ -278,13 +363,18 @@ function setAuthMode(mode) {
 /* ==========================================
    REAL-TIME SYNC
    ========================================== */
-function setupRealtimeSync() {
+async function setupRealtimeSync() {
   if (state.realtimeChannel) {
     state.realtimeChannel.unsubscribe();
     state.realtimeChannel = null;
   }
 
   if (!state.userProfile) return;
+
+  // Only subscribe to friend profile updates (free-tier realtime hygiene)
+  const friendIds = state.connections
+    .filter(c => c.status === 'connected')
+    .map(c => c.friendId);
 
   state.realtimeChannel = subscribeToPulseSync(state.userProfile.id, async (change) => {
     if (change.type === 'profile_updated') {
@@ -293,7 +383,6 @@ function setupRealtimeSync() {
       if (updatedId === state.userProfile.id) {
         state.userProfile = { ...state.userProfile, ...change.record };
         updateMyStatusUI();
-        updateSimulatorUI();
       } else {
         const isFriend = state.connections.some(
           c => c.friendId === updatedId && c.status === 'connected'
@@ -318,7 +407,7 @@ function setupRealtimeSync() {
           if (state._rtDedup[dedupKey] && now - state._rtDedup[dedupKey] < 5000) return;
           state._rtDedup[dedupKey] = now;
 
-          notifyFriendStatusUpdate(displayName, emoji, text);
+          notifyFriendStatusUpdate(displayName, emoji, text, updatedId);
           showToast(`${emoji} ${displayName} updated their status!`);
           await loadDashboardData();
         }
@@ -326,6 +415,8 @@ function setupRealtimeSync() {
     } else if (change.type === 'connection_changed') {
       invalidateCache();
       await loadDashboardData();
+      // Friend list changed — resubscribe so profile filters match new friends
+      setupRealtimeSync();
     } else if (change.type === 'new_message') {
       const msg = change.record;
       if (currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
@@ -336,6 +427,13 @@ function setupRealtimeSync() {
         invalidateCache();
         await loadDashboardData();
       }
+    } else if (change.type === 'message_read') {
+      // Friend marked one of our messages as read → live ✓✓ receipt
+      if (currentChatFriend && change.record.sender_id === state.userProfile?.id) {
+        await loadChatMessages(currentChatFriend.friendId);
+      }
+    } else if (change.type === 'typing_updated') {
+      handleTypingEvent(change.record, change.eventType);
     } else if (change.type === 'private_status_updated') {
       const rec = change.record;
       state.privateStatuses[rec.from_user_id] = rec;
@@ -356,15 +454,44 @@ function setupRealtimeSync() {
       }
       renderFriendLocations();
     }
-  });
+  }, friendIds);
+}
+function renderSkeletons() {
+  const friendsEl = document.getElementById('friends-status-container');
+  const historyEl = document.getElementById('status-history-container');
+
+  if (friendsEl && !friendsEl.querySelector('.user-status-card')) {
+    friendsEl.innerHTML = `
+      <div class="glass-card user-status-card" style="border:none;box-shadow:none;">
+        <div class="skeleton skeleton-avatar"></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+          <div class="skeleton skeleton-line" style="width:45%;"></div>
+          <div class="skeleton skeleton-line" style="width:80%;"></div>
+        </div>
+      </div>
+      <div class="glass-card user-status-card" style="border:none;box-shadow:none;">
+        <div class="skeleton skeleton-avatar"></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:8px;">
+          <div class="skeleton skeleton-line" style="width:40%;"></div>
+          <div class="skeleton skeleton-line" style="width:75%;"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (historyEl && !historyEl.querySelector('.history-item')) {
+    historyEl.innerHTML = `
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+      <div class="skeleton skeleton-card"></div>
+    `;
+  }
 }
 
-/* ==========================================
-   DASHBOARD DATA
-   ========================================== */
 async function loadDashboardData() {
   try {
     const cachedConns = getCachedConnections();
+    if (!cachedConns) renderSkeletons();
 
     // fetchPrivateStatusesForMe is safe — if the table doesn't exist yet it returns empty
     const [profile, connections, privateStatuses] = await Promise.all([
@@ -376,7 +503,6 @@ async function loadDashboardData() {
     if (profile) {
       state.userProfile = profile;
       updateMyStatusUI();
-      updateSimulatorUI();
     }
 
     // Build two lookups:
@@ -438,6 +564,9 @@ async function loadDashboardData() {
       } catch (err) {
         console.warn('[Pulse] History fetch failed:', err.message);
         renderStatusHistory([], connections);
+        // Show error in history container rather than silent empty state
+        const hc = document.getElementById('status-history-container');
+        if (hc) hc.innerHTML = `<div style="font-size:13px;color:hsl(var(--text-muted));font-style:italic;">Could not load history — will retry on next refresh.</div>`;
       }
     } else {
       renderStatusHistory([], connections);
@@ -798,7 +927,7 @@ function renderPendingInvites() {
           <div class="friend-avatar">🔔</div>
           <div class="friend-details">
             <span class="friend-name">${escapeHtml(conn.name)}</span>
-            <span class="friend-email">Wants to connect with you!</span>
+            <span class="friend-email">Wants to connect with you! · ${formatTimeAgo(conn.createdAt)}</span>
           </div>
         </div>
         <div class="friend-actions">
@@ -859,33 +988,79 @@ function renderStatusHistory(history, connections = []) {
     const hasImage = entry.status_image_url;
 
     return `
-      <div class="history-item" ${hasImage ? `onclick="openFullImage('${escapeHtml(entry.status_image_url)}')" style="cursor:pointer;"` : ''}>
+      <div class="history-item${hasImage ? ' history-item-media' : ''}"
+        data-img="${escapeHtml(entry.status_image_url || '')}"
+        data-is-video="${isVideoUrl(entry.status_image_url, entry.status_media_type) ? '1' : '0'}">
         <div class="history-emoji">${escapeHtml(entry.status_emoji)}</div>
         <div class="history-details">
           <span class="history-name">${escapeHtml(displayName)}</span>
           <span class="history-text">"${escapeHtml(entry.status_text || '')}"</span>
           ${hasImage ? (isVideoUrl(entry.status_image_url, entry.status_media_type)
             ? `<video controls playsinline muted preload="metadata"
-                style="width:100%;border-radius:10px;display:block;margin-top:6px;background:#000;"
-                onclick="event.stopPropagation();openFullMedia('${escapeHtml(entry.status_image_url)}',true)">
+                style="width:100%;border-radius:10px;display:block;margin-top:6px;background:#000;">
                  <source src="${escapeHtml(entry.status_image_url)}" type="video/mp4">
                  <source src="${escapeHtml(entry.status_image_url)}" type="video/webm">
                </video>`
-            : `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy"
-                style="cursor:zoom-in;" onclick="event.stopPropagation();openFullImage('${escapeHtml(entry.status_image_url)}')">`)
+            : `<img src="${escapeHtml(entry.status_image_url)}" class="history-image" alt="Status image" loading="lazy" style="cursor:zoom-in;">`)
           : ''}
           <span class="history-time">${formatTimeAgo(entry.created_at)}</span>
         </div>
       </div>
     `;
   }).join('')}</div>`;
+
+  // Event delegation for history item media clicks — no inline onclick (XSS fix)
+  container.querySelectorAll('.history-item-media').forEach(item => {
+    item.style.cursor = 'pointer';
+    item.addEventListener('click', (e) => {
+      if (e.target.tagName === 'VIDEO') return; // let video controls work
+      const img = item.dataset.img;
+      const isVid = item.dataset.isVideo === '1';
+      if (img) isVid ? openFullMedia(img, true) : openFullImage(img);
+    });
+  });
 }
 
 /* ==========================================
    CHAT / DM VIEW
    ========================================== */
+/* ==========================================
+   TYPING INDICATOR UI
+   ========================================== */
+function showTypingIndicator() {
+  const el = document.getElementById('chat-typing-indicator');
+  if (!el) return;
+  el.style.display = 'block';
+}
+
+function hideTypingIndicator() {
+  const el = document.getElementById('chat-typing-indicator');
+  if (!el) return;
+  el.style.display = 'none';
+}
+
+function handleTypingEvent(record, eventType) {
+  if (!currentChatFriend || !record) return;
+  if (record.from_user_id !== currentChatFriend.friendId) return;
+
+  if (eventType === 'DELETE') {
+    clearTimeout(friendTypingTimer);
+    hideTypingIndicator();
+    return;
+  }
+
+  showTypingIndicator();
+  clearTimeout(friendTypingTimer);
+  // Hide 3s after the last typing ping
+  friendTypingTimer = setTimeout(hideTypingIndicator, 3000);
+}
+
 async function openChat(friend) {
   currentChatFriend = friend;
+  chatMessageLimit = 50;
+  chatPagingUp = false;
+  clearTimeout(friendTypingTimer);
+  hideTypingIndicator();
 
   document.getElementById('chat-friend-emoji').textContent = friend.statusEmoji;
   document.getElementById('chat-friend-name').textContent = friend.displayName;
@@ -918,23 +1093,56 @@ async function openChat(friend) {
   if (container) container.scrollTop = container.scrollHeight;
 }
 
-async function loadChatMessages(friendId) {
+function formatChatDay(date) {
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startToday - startDay) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+async function loadChatMessages(friendId, limit = chatMessageLimit) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
+
+  // Preserve scroll when paging up (loading earlier messages) — NOT on regular reloads
+  const wasPaging = chatPagingUp;
+  const prevHeight = container.scrollHeight;
+  const prevScrollTop = container.scrollTop;
+
   container.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
 
   try {
-    const messages = await fetchDirectMessages(friendId);
+    const messages = await fetchDirectMessages(friendId, limit);
     const myId = state.userProfile?.id;
+    const friendEmoji = currentChatFriend?.statusEmoji || '😊';
 
     if (messages.length === 0) {
       container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
       return;
     }
 
-    container.innerHTML = messages.map(msg => {
+    const hasOlder = messages.length >= limit; // we filled the page — older ones exist
+    const loadMoreHtml = hasOlder
+      ? `<button class="chat-load-more btn btn-secondary btn-small" style="align-self:center;">↑ Load earlier</button>`
+      : '';
+
+    const rows = [];
+    let lastDayKey = '';
+
+    messages.forEach(msg => {
       const isSent = msg.sender_id === myId;
-      const time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const d = new Date(msg.created_at);
+      const dayKey = d.toDateString();
+      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      if (dayKey !== lastDayKey) {
+        lastDayKey = dayKey;
+        rows.push(`<div class="chat-date-sep">${escapeHtml(formatChatDay(d))}</div>`);
+      }
+
       const isVideo = msg.image_url && isVideoUrl(msg.image_url, null);
       const mediaHtml = msg.image_url
         ? isVideo
@@ -942,29 +1150,43 @@ async function loadChatMessages(friendId) {
           : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
         : '';
 
-      // Reply preview
       const replyHtml = msg.reply
         ? `<div class="chat-reply-preview">
-             <span class="chat-reply-bar"></span>
-             <span class="chat-reply-text">${escapeHtml(msg.reply.content_text || (msg.reply.image_url ? '📎 Media' : ''))}</span>
+             <span class="chat-reply-bar-line"></span>
+             <span class="chat-reply-text">${escapeHtml(msg.reply?.content_text || (msg.reply?.image_url ? '📎 Media' : ''))}</span>
            </div>`
         : '';
 
-      return `
-        <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
-          data-content="${escapeHtml(msg.content_text || '')}"
-          data-image="${escapeHtml(msg.image_url || '')}"
-          data-sender="${escapeHtml(msg.sender_id)}">
-          ${replyHtml}
-          ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
-          ${mediaHtml}
-          <div style="display:flex;align-items:center;justify-content:${isSent ? 'flex-end' : 'flex-start'};gap:8px;margin-top:4px;">
-            <span class="chat-bubble-time">${time}</span>
-            <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
+      // Read receipts — ✓ delivered, ✓✓ read (only on our own sent messages)
+      const ticks = isSent
+        ? `<span class="chat-tick ${msg.read_at ? 'read' : ''}" title="${msg.read_at ? 'Read' : 'Delivered'}">${msg.read_at ? '✓✓' : '✓'}</span>`
+        : '';
+
+      const avatarHtml = isSent
+        ? ''
+        : `<span class="chat-avatar">${escapeHtml(friendEmoji)}</span>`;
+
+      rows.push(`
+        <div class="chat-row ${isSent ? 'sent' : 'received'}">
+          ${avatarHtml}
+          <div class="chat-bubble ${isSent ? 'sent' : 'received'}" data-msg-id="${escapeHtml(msg.id)}"
+            data-content="${escapeHtml(msg.content_text || '')}"
+            data-image="${escapeHtml(msg.image_url || '')}"
+            data-sender="${escapeHtml(msg.sender_id)}">
+            ${replyHtml}
+            ${msg.content_text ? `<div>${escapeHtml(msg.content_text)}</div>` : ''}
+            ${mediaHtml}
+            <div style="display:flex;align-items:center;justify-content:${isSent ? 'flex-end' : 'flex-start'};gap:8px;margin-top:4px;">
+              <span class="chat-bubble-time">${time}</span>
+              ${ticks}
+              <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
+            </div>
           </div>
         </div>
-      `;
-    }).join('');
+      `);
+    });
+
+    container.innerHTML = loadMoreHtml + rows.join('');
 
     // Attach reply button listeners
     container.querySelectorAll('.chat-reply-btn').forEach(btn => {
@@ -982,8 +1204,22 @@ async function loadChatMessages(friendId) {
       });
     });
 
-    container.scrollTop = container.scrollHeight;
+    // Load earlier — fetch more and keep the view anchored
+    container.querySelector('.chat-load-more')?.addEventListener('click', async () => {
+      chatMessageLimit += 50;
+      chatPagingUp = true;
+      await loadChatMessages(friendId, chatMessageLimit);
+    });
+
+    if (wasPaging) {
+      // Keep roughly the same messages in view after prepending older ones
+      container.scrollTop = container.scrollHeight - prevHeight + prevScrollTop;
+      chatPagingUp = false;
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
   } catch (err) {
+    chatPagingUp = false;
     container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
   }
 }
@@ -1031,6 +1267,9 @@ async function sendChatMessage() {
     if (input) input.value = '';
     removeChatImage();
     clearReply();
+    // Stop broadcasting typing once the message is sent
+    setTypingStatus(currentChatFriend.friendId, false);
+    chatTypingSentAt = 0;
     await loadChatMessages(currentChatFriend.friendId);
   } catch (err) {
     showToast(err.message || 'Failed to send', 'error');
@@ -1400,26 +1639,6 @@ function isVideoUrl(url, mediaType) {
          lower.includes('.mp4') || lower.includes('.webm');
 }
 
-function mediaTag(url, mediaType, opts = {}) {
-  if (!url) return '';
-  const safe = escapeHtml(url);
-  if (isVideoUrl(url, mediaType)) {
-    const { autoplay = false, loop = false, controls = true, style = '' } = opts;
-    // Detect mime type from URL for the source type attribute
-    const lower = url.toLowerCase();
-    const mime = lower.includes('.webm') ? 'video/webm' :
-                 lower.includes('.mov')  ? 'video/mp4'  : 'video/mp4';
-    return `<video ${controls ? 'controls' : ''} ${autoplay ? 'autoplay' : ''}
-      ${loop ? 'loop' : ''} muted playsinline preload="metadata"
-      style="width:100%;border-radius:12px;display:block;max-height:200px;${style}">
-      <source src="${safe}" type="${mime}">
-      <source src="${safe}" type="video/webm">
-      <source src="${safe}" type="video/mp4">
-    </video>`;
-  }
-  const { style = '', onclick = '' } = opts;
-  return `<img src="${safe}" alt="" loading="lazy" style="width:100%;border-radius:12px;display:block;${style}" ${onclick ? `onclick="${onclick}"` : ''}>`;
-}
 
 /* ==========================================
    LIVE LOCATION SHARING
@@ -1850,23 +2069,22 @@ function urlBase64ToUint8Array(base64String) {
 // Dedup: track last notification time per friend to avoid repeated alerts
 const _notifDedup = {};
 
-function notifyFriendStatusUpdate(friendName, emoji, statusText) {
+function notifyFriendStatusUpdate(friendName, emoji, statusText, userId = '') {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
 
-  const key = friendName;
+  // Use userId as dedup key — same name users no longer collide
+  const key = userId || friendName;
   const now = Date.now();
-  // Suppress if we already notified for this friend within 10 seconds
   if (_notifDedup[key] && now - _notifDedup[key] < 10000) return;
   _notifDedup[key] = now;
 
-  // Delegate entirely to the service worker — it handles both popup + persistent
-  // Do NOT call new Notification() here; that would double-fire
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
       type: 'FRIEND_STATUS_UPDATE',
       friendName,
       emoji,
       statusText,
+      userId,
       url: '/'
     });
   }
@@ -2046,7 +2264,16 @@ function initEventListeners() {
     const textInput = document.getElementById('status-text-input');
     if (nameInput) nameInput.value = state.userProfile?.name || '';
     // Pre-fill current status text so user can edit rather than retype
-    if (textInput) textInput.value = state.userProfile?.status_text || '';
+    if (textInput) {
+      textInput.value = state.userProfile?.status_text || '';
+      // Update char counter immediately to reflect pre-filled text
+      const charCounter = document.getElementById('status-char-counter');
+      if (charCounter) {
+        const len = textInput.value.length;
+        charCounter.textContent = `${len}/60`;
+        charCounter.className = 'char-counter' + (len > 50 ? (len >= 60 ? ' over' : ' warn') : '');
+      }
+    }
 
     // Reset image state
     isStatusImageRemoved = false;
@@ -2138,6 +2365,24 @@ function initEventListeners() {
         state.privateStatuses = {};
         await clearOutgoingPrivateStatuses();
         await notifyFriendsOfUpdate(state.userProfile.id, name, state.selectedEmoji, text);
+        // Free-tier bucket hygiene: remove the replaced image ONLY if it's not
+        // still referenced by the user's recent status history (last 15 rows)
+        const oldImageUrl = state.userProfile?.status_image_url;
+        if (oldImageUrl && oldImageUrl !== imageUrl) {
+          try {
+            const { data: historyRows } = await client()
+              .from('status_history')
+              .select('status_image_url')
+              .eq('user_id', state.userProfile.id)
+              .not('status_image_url', 'is', null)
+              .order('created_at', { ascending: false })
+              .limit(15);
+            const stillReferenced = (historyRows || []).some(h => h.status_image_url === oldImageUrl);
+            if (!stillReferenced) deleteStatusImage(oldImageUrl);
+          } catch (e) {
+            // On error, keep the old image — never risk breaking history
+          }
+        }
         await loadDashboardData();
       }
     } catch (err) {
@@ -2238,6 +2483,7 @@ function initEventListeners() {
     if (!state.userProfile?.id) return;
     try {
       await navigator.clipboard.writeText(state.userProfile.id);
+      _flashCopyFeedback('btn-copy-id');
       showToast('Pulse ID copied to clipboard! 📋');
     } catch (err) {
       showToast('Failed to copy ID', 'error');
@@ -2248,19 +2494,68 @@ function initEventListeners() {
     if (!state.userProfile?.id) return;
     try {
       await navigator.clipboard.writeText(state.userProfile.id);
+      _flashCopyFeedback('my-id-display');
       showToast('Pulse ID copied to clipboard! 📋');
     } catch (err) {
       showToast('Failed to copy ID', 'error');
     }
   });
 
+  // Share invite deep link — Web Share API on mobile, clipboard fallback
+  document.getElementById('btn-share-id')?.addEventListener('click', async () => {
+    if (!state.userProfile?.id) return;
+    const link = `${window.location.origin}/?invite=${state.userProfile.id}`;
+    const text = `Join me on Pulse! Tap to connect: ${link}`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Pulse — connect with me', text, url: link });
+        return;
+      } catch (err) {
+        // User cancelled — fall through to clipboard
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      _flashCopyFeedback('btn-share-id');
+      showToast('Invite link copied! 📋');
+    } catch (err) {
+      showToast('Failed to copy invite link', 'error');
+    }
+  });
+
+  function _flashCopyFeedback(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const original = el.textContent;
+    el.textContent = '✓ Copied';
+    setTimeout(() => { if (el.textContent === '✓ Copied') el.textContent = original; }, 1500);
+  }
+
   // Chat
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
   document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
-    // Enter without Shift = newline (send is handled by the send button only)
-    // Shift+Enter also = newline
-    // No auto-send on Enter — user must tap the ➤ button
+    // Enter = send, Shift+Enter = newline
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      sendChatMessage();
+    }
+  });
+
+  // Broadcast typing indicator while the user types (throttled)
+  document.getElementById('chat-input')?.addEventListener('input', () => {
+    if (!currentChatFriend) return;
+    const input = document.getElementById('chat-input');
+    const text = input?.value.trim() || '';
+    const now = Date.now();
+    if (text && now - chatTypingSentAt > 2500) {
+      chatTypingSentAt = now;
+      setTypingStatus(currentChatFriend.friendId, true);
+    } else if (!text) {
+      chatTypingSentAt = 0;
+      setTypingStatus(currentChatFriend.friendId, false);
+    }
   });
 
   // Chat emoji picker
@@ -2356,6 +2651,10 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-back-btn')?.addEventListener('click', () => {
+    // Stop broadcasting typing for this chat
+    if (currentChatFriend?.friendId) setTypingStatus(currentChatFriend.friendId, false);
+    clearTimeout(friendTypingTimer);
+    hideTypingIndicator();
     currentChatFriend = null;
     clearReply();
     const picker = document.getElementById('chat-emoji-picker');
@@ -2369,27 +2668,32 @@ function initEventListeners() {
     document.getElementById('chat-bg-input')?.click();
   });
 
-  document.getElementById('chat-bg-input')?.addEventListener('change', (e) => {
+  document.getElementById('chat-bg-input')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
+    try {
+      // Downscale first — full-res data URLs blow the ~5MB localStorage quota
+      const thumb = await compressImageToDataUrl(file, 900, 0.72);
       const msgs = document.getElementById('chat-messages');
       if (msgs) {
-        msgs.style.backgroundImage = `url(${dataUrl})`;
+        msgs.style.backgroundImage = `url(${thumb})`;
         msgs.style.backgroundSize = 'cover';
         msgs.style.backgroundPosition = 'center';
         msgs.style.backgroundAttachment = 'local';
       }
       // Store per-friend background
       if (currentChatFriend?.friendId) {
-        localStorage.setItem(`pulse-chat-bg-${currentChatFriend.friendId}`, dataUrl);
-        showToast('Chat background updated!');
+        try {
+          localStorage.setItem(`pulse-chat-bg-${currentChatFriend.friendId}`, thumb);
+          showToast('Chat background updated!');
+        } catch (qErr) {
+          showToast('Background preview only — too large to save locally.', 'error');
+        }
       }
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+    } catch (bgErr) {
+      showToast('Could not process that image.', 'error');
+    }
   });
 
   // Reset config
@@ -2453,45 +2757,6 @@ function initEventListeners() {
 }
 
 /* ==========================================
-   LOCKSCREEN SIMULATOR
-   ========================================== */
-function startSimulatorClock() {
-  if (state.clockInterval) clearInterval(state.clockInterval);
-
-  const updateClock = () => {
-    const now = new Date();
-    const timeEl = document.getElementById('sim-time');
-    const dateEl = document.getElementById('sim-date');
-    if (timeEl) {
-      timeEl.textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    if (dateEl) {
-      dateEl.textContent = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
-    }
-  };
-
-  updateClock();
-  state.clockInterval = setInterval(updateClock, 1000);
-}
-
-function updateSimulatorUI() {
-  const simEmoji = document.getElementById('sim-emoji');
-  const simText = document.getElementById('sim-text');
-  const simImage = document.getElementById('sim-image');
-
-  if (simEmoji) simEmoji.textContent = state.userProfile?.status_emoji || '😊';
-  if (simText) simText.textContent = state.userProfile?.status_text || 'Available';
-  if (simImage) {
-    if (state.userProfile?.status_image_url) {
-      simImage.src = state.userProfile.status_image_url;
-      simImage.style.display = 'block';
-    } else {
-      simImage.style.display = 'none';
-    }
-  }
-}
-
-/* ==========================================
    INIT
    ========================================== */
 document.addEventListener('DOMContentLoaded', () => {
@@ -2499,6 +2764,16 @@ document.addEventListener('DOMContentLoaded', () => {
   initEventListeners();
   registerServiceWorker();
   checkNavigationState();
+
+  // Stop broadcasting typing when the tab/app is hidden or closed
+  window.addEventListener('pagehide', () => {
+    if (currentChatFriend?.friendId) setTypingStatus(currentChatFriend.friendId, false);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && currentChatFriend?.friendId) {
+      setTypingStatus(currentChatFriend.friendId, false);
+    }
+  });
 
   // Network status feedback
   window.addEventListener('online', () => {

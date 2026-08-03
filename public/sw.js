@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pulse-v7';
+const CACHE_NAME = 'pulse-v8';
 
 const SHELL_ASSETS = [
   '/',
@@ -32,12 +32,7 @@ self.addEventListener('activate', (event) => {
         names.filter(n => n !== CACHE_NAME).map(n => caches.delete(n))
       ))
       .then(() => self.clients.claim())
-      .then(() => {
-        // Tell all open tabs to reload so they get the new bundle
-        self.clients.matchAll({ type: 'window' }).then(clients => {
-          clients.forEach(client => client.navigate(client.url));
-        });
-      })
+    // No force-reload: skipWaiting + claim is enough; force-reload broke active sessions
   );
 });
 
@@ -97,8 +92,9 @@ self.addEventListener('fetch', (event) => {
 
 const _swNotifTimes = {};
 
-function showStatusNotification({ friendName, emoji, statusText, url = '/' }) {
-  const tag = `pulse-${friendName}`;
+function showStatusNotification({ friendName, emoji, statusText, url = '/', userId = '' }) {
+  // Use userId as dedup key — friendName collisions cause notifications to disappear
+  const tag = `pulse-${userId || friendName}`;
   const now = Date.now();
   const recentlySent = _swNotifTimes[tag] && (now - _swNotifTimes[tag] < 8000);
   _swNotifTimes[tag] = now;
@@ -201,7 +197,7 @@ self.addEventListener('message', (event) => {
 
   // Triggered by realtime subscription when a friend updates
   if (event.data?.type === 'FRIEND_STATUS_UPDATE') {
-    const { friendName, emoji, statusText, url } = event.data;
-    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+    const { friendName, emoji, statusText, url, userId } = event.data;
+    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url, userId }));
   }
 });

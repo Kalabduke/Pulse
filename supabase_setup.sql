@@ -377,6 +377,79 @@ update public.connections set friend_name_snapshot = null;
 -- ====================================================================
 
 -- ====================================================================
+-- TYPING INDICATORS (chat "typing…")
+-- ====================================================================
+
+create table if not exists public.typing_statuses (
+  from_user_id uuid references public.profiles(id) on delete cascade not null,
+  to_user_id   uuid references public.profiles(id) on delete cascade not null,
+  updated_at   timestamptz default now() not null,
+  primary key (from_user_id, to_user_id)
+);
+
+alter table public.typing_statuses enable row level security;
+
+drop policy if exists "Sender manages own typing status" on public.typing_statuses;
+drop policy if exists "Recipient can view typing status sent to them" on public.typing_statuses;
+
+-- Sender can upsert/delete their own typing rows
+create policy "Sender manages own typing status"
+on public.typing_statuses for all to authenticated
+using (auth.uid() = from_user_id)
+with check (auth.uid() = from_user_id);
+
+-- Recipient can only see typing rows sent to them
+create policy "Recipient can view typing status sent to them"
+on public.typing_statuses for select to authenticated
+using (auth.uid() = to_user_id);
+
+-- Realtime so the recipient sees the indicator instantly
+do $$ begin
+  begin
+    alter publication supabase_realtime add table public.typing_statuses;
+  exception when others then end;
+end; $$;
+
+-- ====================================================================
+-- PERFORMANCE: unread counts + hot-query indexes (free-tier friendly)
+-- ====================================================================
+
+-- One grouped query returns unread message counts for the caller
+create or replace function public.my_unread_message_counts()
+returns table (sender uuid, cnt bigint)
+language sql stable security definer
+as $$
+  select sender_id, count(*)::bigint
+  from public.messages
+  where recipient_id = auth.uid() and read_at is null
+  group by sender_id;
+$$;
+
+-- Realtime publication for messages already exists; add missing hot indexes
+do $$
+begin
+  begin
+    create index if not exists idx_messages_recipient_unread on public.messages (recipient_id, read_at);
+  exception when others then end;
+  begin
+    create index if not exists idx_messages_conversation on public.messages (sender_id, recipient_id, created_at desc);
+  exception when others then end;
+  begin
+    create index if not exists idx_status_history_user on public.status_history (user_id, created_at desc);
+  exception when others then end;
+  begin
+    create index if not exists idx_connections_user on public.connections (user_id);
+  exception when others then end;
+  begin
+    create index if not exists idx_connections_friend on public.connections (friend_id);
+  exception when others then end;
+  begin
+    create index if not exists idx_profiles_last_seen on public.profiles (last_seen);
+  exception when others then end;
+end;
+$$;
+
+-- ====================================================================
 -- LIVE LOCATION SHARING
 -- ====================================================================
 

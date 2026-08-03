@@ -196,7 +196,10 @@
             <span style="font-size: 11px; color: hsl(var(--text-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex:1;">
               ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: #a5b4fc;">Loading...</strong>
             </span>
-            <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px; flex-shrink:0;">Copy</button>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <button id="btn-share-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;" title="Share invite link">Share</button>
+              <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;">Copy</button>
+            </div>
           </div>
         </div>
 
@@ -263,6 +266,7 @@
         <input type="file" id="chat-bg-input" accept="image/*" style="display:none;">
       </div>
       <div id="chat-messages" class="chat-messages"></div>
+      <div id="chat-typing-indicator" class="chat-typing-indicator" style="display:none;">typing…</div>
       <div class="chat-input-area">
         <!-- Reply bar — shown when replying to a message -->
         <div id="chat-reply-bar" style="display:none;" class="chat-reply-bar">

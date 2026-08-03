@@ -6,10 +6,6 @@ function safeLocalGet(key) {
 
 let supabase = null;
 
-const SUPABASE_URL = safeLocalGet('pulse_supabase_url')
-  || import.meta.env.VITE_SUPABASE_URL
-  || 'https://hrbophzmwuhmzyibjuge.supabase.co';
-
 export function initSupabase(url = null, anonKey = null) {
   const configUrl = url
     || localStorage.getItem('pulse_supabase_url')
@@ -396,17 +392,27 @@ export async function fetchConnections() {
   const unreadCounts = {};
   if (friendIds.length > 0) {
     try {
-      const { data: unreadData } = await client()
-        .from('messages')
-        .select('sender_id')
-        .eq('recipient_id', user.id)
-        .is('read_at', null)
-        .in('sender_id', friendIds);
-
-      if (unreadData) {
-        unreadData.forEach(row => {
-          unreadCounts[row.sender_id] = (unreadCounts[row.sender_id] || 0) + 1;
+      // Single grouped RPC call (function added in supabase_setup.sql) — 1 query instead of scanning rows
+      const { data: unreadRows, error: rpcError } = await client().rpc('my_unread_message_counts');
+      if (!rpcError && Array.isArray(unreadRows)) {
+        unreadRows.forEach(row => {
+          if (row.sender) unreadCounts[row.sender] = Number(row.cnt || 0);
         });
+      } else {
+        // Fallback for older DBs without the function
+        const { data: unreadData } = await client()
+          .from('messages')
+          .select('sender_id')
+          .eq('recipient_id', user.id)
+          .is('read_at', null)
+          .in('sender_id', friendIds)
+          .limit(1000);
+
+        if (unreadData) {
+          unreadData.forEach(row => {
+            unreadCounts[row.sender_id] = (unreadCounts[row.sender_id] || 0) + 1;
+          });
+        }
       }
     } catch (e) {
       console.warn('[Pulse] Unread count query notice:', e.message);
@@ -431,6 +437,7 @@ export async function fetchConnections() {
       friendId,
       name: friendName,
       displayName: myNickname?.trim() || friendName,
+      createdAt: conn.created_at,
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
       statusImageUrl: friend?.status_image_url || null,
@@ -763,7 +770,7 @@ export async function sendDirectMessage(recipientId, text, imageUrl = null, repl
   return data;
 }
 
-export async function fetchDirectMessages(friendId) {
+export async function fetchDirectMessages(friendId, limit = 50) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
@@ -771,10 +778,12 @@ export async function fetchDirectMessages(friendId) {
     .from('messages')
     .select('*, reply:reply_to_id(id, content_text, image_url, sender_id)')
     .or(`and(sender_id.eq.${user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${user.id})`)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: false })
+    .limit(limit);
 
   if (error) throw error;
-  return data || [];
+  // Return in ascending order for display
+  return (data || []).reverse();
 }
 
 export async function markMessagesAsRead(friendId) {
@@ -803,6 +812,51 @@ export async function updateLastSeen() {
     .from('profiles')
     .update({ last_seen: new Date().toISOString() })
     .eq('id', user.id);
+}
+
+/* ==========================================
+   TYPING INDICATORS
+   ========================================== */
+
+export async function setTypingStatus(friendId, typing) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user || !friendId) return;
+  try {
+    if (typing) {
+      await client()
+        .from('typing_statuses')
+        .upsert({
+          from_user_id: user.id,
+          to_user_id: friendId,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'from_user_id,to_user_id' });
+    } else {
+      await client()
+        .from('typing_statuses')
+        .delete()
+        .eq('from_user_id', user.id)
+        .eq('to_user_id', friendId);
+    }
+  } catch (e) {
+    // Table may not exist yet on older projects — typing is best-effort
+  }
+}
+
+/* ==========================================
+   STORAGE CLEANUP (free-tier bucket protection)
+   ========================================== */
+
+// Delete a previously-uploaded status image from the bucket. Called when a user
+// replaces/removes their status photo so the 1GB free bucket doesn't fill up.
+export async function deleteStatusImage(url) {
+  if (!url || !url.includes('/storage/v1/object/public/pulse-images/')) return;
+  try {
+    const marker = '/storage/v1/object/public/pulse-images/';
+    const path = url.split(marker)[1]?.split('?')[0];
+    if (path) await client().storage.from('pulse-images').remove([path]);
+  } catch (e) {
+    console.warn('[Pulse] Old status image cleanup failed:', e.message);
+  }
 }
 
 /* ==========================================
@@ -839,14 +893,17 @@ export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
   try {
     const supabaseUrl = localStorage.getItem('pulse_supabase_url')
       || import.meta.env.VITE_SUPABASE_URL;
-    const anonKey = localStorage.getItem('pulse_supabase_anon_key')
-      || import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-    await fetch(`${supabaseUrl}/functions/v1/bright-processor`, {
+    // Send the user's own access token so the edge function can verify identity
+    const { data: { session } } = await client().auth.getSession();
+    const token = session?.access_token;
+    if (!token) return;
+
+    await fetch(`${supabaseUrl}/functions/v1/notify-friends`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${anonKey}`
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({ userId, name, emoji, statusText })
     });
@@ -855,21 +912,25 @@ export async function notifyFriendsOfUpdate(userId, name, emoji, statusText) {
   }
 }
 
-export function subscribeToPulseSync(userId, callback) {
+export function subscribeToPulseSync(userId, callback, friendIds = []) {
   if (!isSupabaseConfigured()) return null;
+
+  // Only receive profile updates for ourselves + connected friends — otherwise
+  // every user's heartbeat floods every client's channel (free-tier realtime dies).
+  const profileIds = friendIds.length ? [userId, ...friendIds] : [userId];
 
   return client()
     .channel(`pulse-sync-${userId}`)
     .on(
       'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'profiles' },
+      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=in.(${profileIds.join(',')})` },
       (payload) => {
         callback({ type: 'profile_updated', record: payload.new });
       }
     )
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'connections' },
+      { event: '*', schema: 'public', table: 'connections', filter: `or=(user_id=eq.${userId},friend_id=eq.${userId})` },
       (payload) => {
         callback({
           type: 'connection_changed',
@@ -887,6 +948,14 @@ export function subscribeToPulseSync(userId, callback) {
     )
     .on(
       'postgres_changes',
+      { event: 'UPDATE', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` },
+      (payload) => {
+        // A friend marked one of our messages as read → live ✓✓ receipt
+        callback({ type: 'message_read', record: payload.new });
+      }
+    )
+    .on(
+      'postgres_changes',
       { event: '*', schema: 'public', table: 'private_statuses', filter: `to_user_id=eq.${userId}` },
       (payload) => {
         callback({ type: 'private_status_updated', record: payload.new });
@@ -897,6 +966,17 @@ export function subscribeToPulseSync(userId, callback) {
       { event: '*', schema: 'public', table: 'location_shares', filter: `to_user_id=eq.${userId}` },
       (payload) => {
         callback({ type: 'location_updated', record: payload.new });
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'typing_statuses', filter: `to_user_id=eq.${userId}` },
+      (payload) => {
+        callback({
+          type: 'typing_updated',
+          eventType: payload.eventType,
+          record: payload.new || payload.old
+        });
       }
     )
     .subscribe((status) => {
