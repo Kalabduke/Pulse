@@ -22,7 +22,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="⚡ Pulse"
-            android:textColor="#a5b4fc"
+            android:textColor="#ff9aa0"
             android:textSize="11sp"
             android:textStyle="bold"
             android:letterSpacing="0.05"/>

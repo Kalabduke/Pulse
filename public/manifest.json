@@ -4,8 +4,8 @@
   "description": "Real-time emotional & health status updates for close friends.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0d0a1c",
-  "theme_color": "#565ef0",
+  "background_color": "#0c0c0f",
+  "theme_color": "#0c0c0f",
   "orientation": "portrait-primary",
   "categories": ["social", "lifestyle"],
   "shortcuts": [
