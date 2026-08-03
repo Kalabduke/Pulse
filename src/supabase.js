@@ -819,6 +819,39 @@ export async function markMessagesAsDelivered(friendId) {
   if (error) throw error;
 }
 
+// Delete one of your own messages. RLS enforces sender-only deletes.
+export async function deleteDirectMessage(messageId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { error } = await client()
+    .from('messages')
+    .delete()
+    .eq('id', messageId)
+    .eq('sender_id', user.id);
+
+  if (error) throw error;
+}
+
+// Full-history text search inside one conversation (DB-side ILIKE).
+// Returns matches oldest-first for display.
+export async function searchDirectMessages(friendId, query, limit = 30) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+  if (!query || !query.trim()) return [];
+
+  const { data, error } = await client()
+    .from('messages')
+    .select('*, reply:reply_to_id(id, content_text, image_url, sender_id)')
+    .or(`and(sender_id.eq.${user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${user.id})`)
+    .ilike('content_text', `%${query.trim()}%`)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return (data || []).reverse();
+}
+
 // Toggle an emoji reaction on a message. Backed by the security-definer RPC
 // toggle_message_reaction (participant-checked). Returns the new reactions map
 // ({"👍": ["user-uuid", ...]}) or null on failure.
@@ -1024,6 +1057,14 @@ export function subscribeToPulseSync(userId, callback, friendIds = []) {
         // Read/delivered receipts + reactions on messages I sent OR received —
         // the client patches the bubble in place (no full chat reload)
         callback({ type: 'message_updated', record: payload.new });
+      }
+    )
+    .on(
+      'postgres_changes',
+      { event: 'DELETE', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
+      (payload) => {
+        // A message in one of my conversations was deleted — remove it in place
+        callback({ type: 'message_deleted', record: payload.old });
       }
     )
     .on(

@@ -28,6 +28,8 @@ import {
   markMessagesAsRead,
   markMessagesAsDelivered,
   toggleMessageReaction,
+  deleteDirectMessage,
+  searchDirectMessages,
   updateLastSeen,
   upsertPrivateStatus,
   fetchPrivateStatusesForMe,
@@ -87,6 +89,7 @@ let chatTypingSentAt = 0;       // last time we broadcast "typing…"
 let friendTypingTimer = null;
 let chatMessagesCache = {};     // msg.id → msg for the open chat (in-place realtime patches)
 let openReactPicker = null;     // currently open reaction picker element
+let chatSearchMode = false;     // search bar + results overlay active
 
 // Quick-reaction set shown in the per-message picker
 const REACTION_EMOJIS = ['👍','❤️','😂','😮','😢','🔥','🎉','😍','🙏','💯','👏','🤯'];
@@ -459,6 +462,18 @@ async function setupRealtimeSync() {
     } else if (change.type === 'message_updated') {
       // Read/delivered receipt or reaction → patch just that bubble, no reload
       if (currentChatFriend) patchMessageBubble(change.record);
+    } else if (change.type === 'message_deleted') {
+      // A message in this conversation was deleted — remove it in place
+      const rec = change.record;
+      if (currentChatFriend) {
+        const isMine = rec?.sender_id === state.userProfile?.id;
+        const otherId = isMine ? rec?.recipient_id : rec?.sender_id;
+        if (rec?.id && otherId === currentChatFriend.friendId) removeChatMessageRow(rec.id);
+        // Deletion from another conversation — nothing to refresh while chat is open
+      } else {
+        invalidateCache();
+        await loadDashboardData();
+      }
     } else if (change.type === 'typing_updated') {
       handleTypingEvent(change.record, change.eventType);
     } else if (change.type === 'private_status_updated') {
@@ -1088,6 +1103,7 @@ async function openChat(friend) {
   chatPagingUp = false;
   chatMessagesCache = {};
   closeReactPicker();
+  closeChatSearch();
   clearTimeout(friendTypingTimer);
   hideTypingIndicator();
 
@@ -1272,6 +1288,7 @@ function buildChatRow(msg, myId) {
           ${ticks}
           <button class="chat-reply-btn" data-msg-id="${escapeHtml(msg.id)}" title="Reply">↩</button>
           <button class="chat-react-btn" data-msg-id="${escapeHtml(msg.id)}" title="React">🙂</button>
+          ${isSent ? `<button class="chat-del-btn" data-msg-id="${escapeHtml(msg.id)}" title="Delete message">🗑</button>` : ''}
         </div>
         ${reactionsHtml}
       </div>
@@ -1432,6 +1449,133 @@ function closeReactPicker() {
   if (openReactPicker) {
     openReactPicker.remove();
     openReactPicker = null;
+  }
+}
+
+/* ==========================================
+   CHAT SEARCH — full-history search inside a conversation
+   ========================================== */
+function openChatSearch() {
+  chatSearchMode = true;
+  closeReactPicker();
+  const bar = document.getElementById('chat-search-bar');
+  const input = document.getElementById('chat-search-input');
+  const results = document.getElementById('chat-search-results');
+  const msgs = document.getElementById('chat-messages');
+  if (bar) bar.style.display = 'flex';
+  if (msgs) msgs.style.display = 'none';
+  if (results) {
+    results.style.display = 'flex';
+    results.innerHTML = '<div class="chat-search-empty">Type to search this chat…</div>';
+  }
+  if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
+}
+
+function closeChatSearch() {
+  chatSearchMode = false;
+  const bar = document.getElementById('chat-search-bar');
+  const input = document.getElementById('chat-search-input');
+  const results = document.getElementById('chat-search-results');
+  const msgs = document.getElementById('chat-messages');
+  if (bar) bar.style.display = 'none';
+  if (results) { results.style.display = 'none'; results.innerHTML = ''; }
+  if (msgs) msgs.style.display = 'flex';
+  if (input) input.value = '';
+}
+
+async function runChatSearch() {
+  if (!currentChatFriend) return;
+  const input = document.getElementById('chat-search-input');
+  const q = input?.value.trim();
+  const results = document.getElementById('chat-search-results');
+  if (!results) return;
+  if (!q) {
+    results.innerHTML = '<div class="chat-search-empty">Type to search this chat…</div>';
+    return;
+  }
+  results.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
+  try {
+    const found = await searchDirectMessages(currentChatFriend.friendId, q);
+    renderChatSearchResults(found, q);
+  } catch (err) {
+    console.warn('[Pulse] Chat search failed:', err.message);
+    results.innerHTML = '<div class="chat-search-empty">Search failed — try again.</div>';
+  }
+}
+
+function renderChatSearchResults(results, query) {
+  const container = document.getElementById('chat-search-results');
+  if (!container) return;
+  const myId = state.userProfile?.id;
+  if (results.length === 0) {
+    container.innerHTML = `<div class="chat-search-empty">No matches for “${escapeHtml(query)}”.</div>`;
+    return;
+  }
+  container.innerHTML = `<div class="chat-search-count">${results.length} result${results.length > 1 ? 's' : ''} for “${escapeHtml(query)}”</div>` +
+    results.map(r => {
+      const isMine = r.sender_id === myId;
+      const time = new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const text = r.content_text || (r.image_url ? (isVideoUrl(r.image_url, null) ? '🎬 Video' : '🖼️ Photo') : '');
+      return `<button class="chat-search-result" data-msg-id="${escapeHtml(r.id)}">
+        <span class="chat-search-result-emoji">${isMine ? '🙂' : escapeHtml(currentChatFriend?.statusEmoji || '😊')}</span>
+        <span class="chat-search-result-body">
+          <span class="chat-search-result-meta">${isMine ? 'You' : escapeHtml(currentChatFriend?.displayName || 'Friend')} · ${time}</span>
+          <span class="chat-search-result-text">${escapeHtml(text.length > 90 ? text.slice(0, 90) + '…' : text)}</span>
+        </span>
+      </button>`;
+    }).join('');
+}
+
+// Scroll to an already-loaded message and flash it
+function jumpToMessage(msgId) {
+  closeChatSearch();
+  const bubble = document.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
+  if (!bubble) {
+    showToast('Message is outside the loaded window — load earlier messages.', 'error');
+    return;
+  }
+  const row = bubble.closest('.chat-row');
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('chat-jump-flash');
+    setTimeout(() => row.classList.remove('chat-jump-flash'), 2000);
+  }
+}
+
+/* ==========================================
+   DELETE MESSAGE — sender-only, confirm + in-place removal
+   ========================================== */
+function removeChatMessageRow(msgId) {
+  if (!msgId) return;
+  delete chatMessagesCache[msgId];
+  // Remove the bubble row in the open chat
+  const bubble = document.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
+  if (bubble) {
+    const row = bubble.closest('.chat-row');
+    if (row) row.remove();
+  }
+  // Also drop any stale entry in the open search-results view
+  document.querySelectorAll(`.chat-search-result[data-msg-id="${CSS.escape(msgId)}"]`).forEach(el => el.remove());
+  // If the deleted message was being replied to, clear the reply bar
+  if (currentReplyTo?.id === msgId) clearReply();
+}
+
+async function confirmDeleteMessage(msgId) {
+  if (!msgId) return;
+  const confirmed = await showConfirmModal({
+    icon: '🗑️',
+    title: 'Delete message?',
+    body: 'This deletes the message for both of you. It cannot be undone.',
+    okLabel: 'Delete'
+  });
+  if (!confirmed) return;
+  try {
+    await deleteDirectMessage(msgId);
+    removeChatMessageRow(msgId);
+    showToast('Message deleted');
+  } catch (err) {
+    console.warn('[Pulse] Delete failed:', err.message);
+    showToast('Could not delete message.', 'error');
   }
 }
 
@@ -2754,6 +2898,20 @@ function initEventListeners() {
   // Chat
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
 
+  // Chat search — toggle bar, Enter to search, close
+  document.getElementById('chat-search-btn')?.addEventListener('click', () => {
+    if (chatSearchMode) closeChatSearch();
+    else openChatSearch();
+  });
+  document.getElementById('chat-search-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); runChatSearch(); }
+  });
+  document.getElementById('chat-search-close')?.addEventListener('click', closeChatSearch);
+  document.getElementById('chat-search-results')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chat-search-result');
+    if (btn) jumpToMessage(btn.dataset.msgId);
+  });
+
   // Delegated chat bubble interactions — survives re-renders (reply + reactions)
   const chatMessagesEl = document.getElementById('chat-messages');
   chatMessagesEl?.addEventListener('click', (e) => {
@@ -2778,6 +2936,13 @@ function initEventListeners() {
     if (reactBtn) {
       e.stopPropagation();
       toggleReactPicker(reactBtn.dataset.msgId, reactBtn);
+      return;
+    }
+    // Delete button → confirm + delete
+    const delBtn = e.target.closest('.chat-del-btn');
+    if (delBtn) {
+      e.stopPropagation();
+      confirmDeleteMessage(delBtn.dataset.msgId);
       return;
     }
     // Reply button
@@ -2928,6 +3093,7 @@ function initEventListeners() {
     clearTimeout(friendTypingTimer);
     hideTypingIndicator();
     closeReactPicker();
+    closeChatSearch();
     chatMessagesCache = {};
     currentChatFriend = null;
     clearReply();

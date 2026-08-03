@@ -262,10 +262,20 @@
           <span id="chat-friend-emoji" class="chat-header-emoji">😊</span>
           <span id="chat-friend-name" class="chat-header-name">Friend</span>
         </div>
-        <button id="chat-bg-btn" class="btn btn-small btn-secondary" style="padding:8px 10px;font-size:14px;" title="Chat background">🖼️</button>
+        <div class="chat-header-actions">
+          <button id="chat-search-btn" class="btn btn-small btn-secondary" style="padding:8px 10px;font-size:14px;" title="Search chat">🔍</button>
+          <button id="chat-bg-btn" class="btn btn-small btn-secondary" style="padding:8px 10px;font-size:14px;" title="Chat background">🖼️</button>
+        </div>
         <input type="file" id="chat-bg-input" accept="image/*" style="display:none;">
       </div>
+      <!-- Chat search bar -->
+      <div id="chat-search-bar" class="chat-search-bar" style="display:none;">
+        <span class="chat-search-icon">🔍</span>
+        <input id="chat-search-input" class="chat-search-input" type="search" placeholder="Search this chat…" autocomplete="off" enterkeyhint="search">
+        <button id="chat-search-close" class="chat-search-close" title="Close search">✕</button>
+      </div>
       <div id="chat-messages" class="chat-messages"></div>
+      <div id="chat-search-results" class="chat-search-results" style="display:none;"></div>
       <div id="chat-typing-indicator" class="chat-typing-indicator" style="display:none;">typing…</div>
       <div class="chat-input-area">
         <!-- Reply bar — shown when replying to a message -->

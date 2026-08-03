@@ -232,6 +232,13 @@ on public.messages for update to authenticated
 using (auth.uid() = recipient_id)
 with check (auth.uid() = recipient_id);
 
+-- Sender can delete their own messages — the row vanishes for both sides
+-- via realtime (message_deleted).
+drop policy if exists "Users can delete their own direct messages" on public.messages;
+create policy "Users can delete their own direct messages"
+on public.messages for delete to authenticated
+using (auth.uid() = sender_id);
+
 -- ====================================================================
 -- MESSAGE REACTIONS — toggle an emoji on a message.
 -- Both participants may react. Stored as {"👍": ["user-uuid", ...]}.
