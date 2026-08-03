@@ -814,6 +814,37 @@ export async function updateLastSeen() {
     .eq('id', user.id);
 }
 
+// Push a DM notification to a friend via the notify-friends edge function
+// (fires when their app is closed/backgrounded — in-app uses realtime instead)
+export async function notifyFriendOfMessage(recipientId, senderName, emoji, messageText, imageUrl = null) {
+  try {
+    const supabaseUrl = localStorage.getItem('pulse_supabase_url')
+      || import.meta.env.VITE_SUPABASE_URL;
+
+    const { data: { session } } = await client().auth.getSession();
+    const token = session?.access_token;
+    if (!token || !recipientId) return;
+
+    await fetch(`${supabaseUrl}/functions/v1/notify-friends`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        type: 'message',
+        recipientId,
+        name: senderName,
+        emoji,
+        messageText: (messageText || '').slice(0, 300),
+        imageUrl: imageUrl || null
+      })
+    });
+  } catch (err) {
+    console.warn('[Pulse] DM push notification failed:', err.message);
+  }
+}
+
 /* ==========================================
    TYPING INDICATORS
    ========================================== */

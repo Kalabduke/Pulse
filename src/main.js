@@ -37,6 +37,7 @@ import {
   fetchMyActiveShares,
   setTypingStatus,
   deleteStatusImage,
+  notifyFriendOfMessage,
   client
 } from './supabase.js';
 
@@ -284,6 +285,23 @@ function handleDeepLinks() {
   if (inviteId && !_inviteHandled) {
     _inviteHandled = true;
     handleInviteLink(inviteId);
+  }
+
+  // Notification tap: /?chat=<friendId> → open that conversation
+  const chatId = params.get('chat');
+  if (chatId) {
+    setTimeout(() => {
+      const friend = state.connections.find(c => c.friendId === chatId && c.status === 'connected');
+      if (friend) {
+        openChat(friend);
+      } else {
+        showToast('Message from a friend — connect to reply.', 'info');
+      }
+    }, 400);
+    const clean = new URLSearchParams(_savedSearch);
+    clean.delete('chat');
+    const qs = clean.toString();
+    window.history.replaceState(null, '', qs ? `?${qs}` : window.location.pathname);
   }
 }
 
@@ -1270,6 +1288,14 @@ async function sendChatMessage() {
     // Stop broadcasting typing once the message is sent
     setTypingStatus(currentChatFriend.friendId, false);
     chatTypingSentAt = 0;
+    // Push a lock-screen notification to the friend (in-app is handled by realtime)
+    notifyFriendOfMessage(
+      currentChatFriend.friendId,
+      state.userProfile?.name || 'A friend',
+      state.userProfile?.status_emoji || '💬',
+      text || '',
+      imageUrl
+    );
     await loadChatMessages(currentChatFriend.friendId);
   } catch (err) {
     showToast(err.message || 'Failed to send', 'error');

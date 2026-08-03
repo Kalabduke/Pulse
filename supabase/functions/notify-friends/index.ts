@@ -96,34 +96,78 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const body = await req.json();
-    const { userId, emoji, statusText, name } = body;
+    const { type = 'status', userId, emoji, statusText, name, recipientId, messageText, imageUrl } = body;
 
-    // The update must belong to the authenticated caller
-    if (!userId || userId !== user.id) {
-      return new Response(JSON.stringify({ error: 'userId must match the authenticated user' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      });
+    let friendIds: string[] = [];
+
+    if (type === 'message') {
+      // ---- DM push: caller is the SENDER, recipientId is who gets notified ----
+      if (!recipientId || recipientId === user.id) {
+        return new Response(JSON.stringify({ error: 'recipientId required and must differ from the caller' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Only notify if the two users are actually connected (anti-spam)
+      const { data: conn } = await supabase
+        .from('connections')
+        .select('id')
+        .eq('status', 'connected')
+        .or(`and(user_id.eq.${user.id},friend_id.eq.${recipientId}),and(user_id.eq.${recipientId},friend_id.eq.${user.id})`);
+
+      if (!conn || conn.length === 0) {
+        return new Response(JSON.stringify({ error: 'Users are not connected' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+      friendIds = [recipientId];
+    } else {
+      // ---- Status push: the update must belong to the authenticated caller ----
+      if (!userId || userId !== user.id) {
+        return new Response(JSON.stringify({ error: 'userId must match the authenticated user' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      const { data: connections, error: connError } = await supabase
+        .from('connections')
+        .select('user_id, friend_id')
+        .eq('status', 'connected')
+        .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+
+      if (connError) throw connError;
+
+      friendIds = (connections ?? [])
+        .map((c: any) => c.user_id === userId ? c.friend_id : c.user_id)
+        .filter((id: string) => id !== userId);
     }
-
-    // ---- 2. Find connected friends ----
-    const { data: connections, error: connError } = await supabase
-      .from('connections')
-      .select('user_id, friend_id')
-      .eq('status', 'connected')
-      .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
-
-    if (connError) throw connError;
-
-    const friendIds = (connections ?? [])
-      .map((c: any) => c.user_id === userId ? c.friend_id : c.user_id)
-      .filter((id: string) => id !== userId);
 
     if (friendIds.length === 0) {
       return new Response(JSON.stringify({ sent: 0, reason: 'no friends' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+
+    // Shared notification content — differs by type.
+    // Fetch the sender's identity from profiles server-side instead of trusting
+    // the request body, so a connected friend can't spoof the notification title.
+    const isMessage = type === 'message';
+    const { data: senderProfile } = await supabase
+      .from('profiles')
+      .select('name, status_emoji')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    const senderName = senderProfile?.name || name || 'A friend';
+    const senderEmoji = senderProfile?.status_emoji || emoji || (isMessage ? '💬' : '💫');
+    const notifTitle = `${senderEmoji} ${senderName}`;
+    const notifBody = isMessage
+      ? (messageText || (imageUrl ? '📎 Photo' : 'Sent you a message'))
+      : `"${statusText || 'Updated their status'}"`;
+    const notifUrl = isMessage ? `/?chat=${user.id}` : '/';
 
     // ---- 3. Android FCM push (native app) ----
     const serviceAccountStr = Deno.env.get('FIREBASE_SERVICE_ACCOUNT') ?? '';
@@ -149,14 +193,17 @@ Deno.serve(async (req) => {
               message: {
                 token,
                 notification: {
-                  title: `${emoji || '💫'} ${name || 'A friend'}`,
-                  body: `"${statusText || 'Updated their status'}"`
+                  title: notifTitle,
+                  body: notifBody
                 },
                 data: {
-                  friendName: name || 'A friend',
-                  emoji: emoji || '💫',
-                  statusText: statusText || 'Updated their status',
-                  url: '/'
+                  type: isMessage ? 'message' : 'status',
+                  friendName: senderName,
+                  emoji: senderEmoji,
+                  statusText: statusText || '',
+                  messageText: messageText || '',
+                  imageUrl: imageUrl || '',
+                  url: notifUrl
                 },
                 android: {
                   priority: 'high',
@@ -215,10 +262,13 @@ Deno.serve(async (req) => {
         .in('user_id', friendIds);
 
       const payload = JSON.stringify({
-        friendName: name || 'A friend',
-        emoji: emoji || '💫',
-        statusText: statusText || 'Updated their status',
-        url: '/'
+        type: isMessage ? 'message' : 'status',
+        friendName: senderName,
+        emoji: senderEmoji,
+        statusText: statusText || '',
+        messageText: (messageText || '').slice(0, 300),
+        imageUrl: imageUrl || '',
+        url: notifUrl
       });
 
       for (const row of (subs ?? [])) {

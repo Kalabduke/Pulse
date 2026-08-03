@@ -127,28 +127,71 @@ function showStatusNotification({ friendName, emoji, statusText, url = '/', user
     });
 }
 
+// DM notification — same dedup + visibility logic as status, plus Reply action
+function showMessageNotification({ friendName, emoji, messageText, url = '/', imageUrl = '' }) {
+  const tag = `pulse-msg-${friendName}`;
+  const now = Date.now();
+  const recentlySent = _swNotifTimes[tag] && (now - _swNotifTimes[tag] < 8000);
+  _swNotifTimes[tag] = now;
+
+  const title = `${emoji || '💬'} ${friendName}`;
+  const body = messageText || (imageUrl ? '📎 Photo' : 'Sent you a message');
+
+  return self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(clientList => {
+      const appVisible = clientList.some(c => c.visibilityState === 'visible');
+      if (appVisible) return; // in-app toast/realtime already handles it
+
+      return self.registration.showNotification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/notification-icon.png',
+        tag,
+        renotify: !recentlySent,
+        requireInteraction: false,
+        silent: recentlySent,
+        vibrate: recentlySent ? [] : [150, 80, 150],
+        data: { url },
+        actions: [
+          { action: 'reply',    title: '💬 Reply' },
+          { action: 'dismiss',  title: '✕ Dismiss' }
+        ]
+      });
+    });
+}
+
 // ==========================================
-// PUSH — from server (future web push)
+// PUSH — from server (FCM + web push)
 // ==========================================
 self.addEventListener('push', (event) => {
   let friendName = 'A friend';
   let emoji = '💫';
   let statusText = 'Updated their status';
+  let messageText = '';
+  let imageUrl = '';
   let url = '/';
+  let type = 'status';
 
   if (event.data) {
     try {
       const d = event.data.json();
+      type        = d.type        || type;
       friendName  = d.friendName  || friendName;
       emoji       = d.emoji       || emoji;
       statusText  = d.statusText  || statusText;
+      messageText = d.messageText || '';
+      imageUrl    = d.imageUrl    || '';
       url         = d.url         || url;
     } catch {
       statusText = event.data.text() || statusText;
     }
   }
 
-  event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+  if (type === 'message') {
+    event.waitUntil(showMessageNotification({ friendName, emoji, messageText, imageUrl, url }));
+  } else {
+    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+  }
 });
 
 // ==========================================
@@ -165,7 +208,14 @@ self.addEventListener('notificationclick', (event) => {
       .then(clientList => {
         for (const client of clientList) {
           if (client.url.includes(self.location.origin) && 'focus' in client) {
-            return client.focus();
+            client.focus();
+            // Navigate the focused tab to the target (chat deep link) so the
+            // app can react to ?chat= — but only when it's a real target.
+            // If navigation fails (uncontrolled client), open a fresh window.
+            if (targetUrl !== '/' && 'navigate' in client) {
+              return client.navigate(targetUrl).catch(() => clients.openWindow(targetUrl));
+            }
+            return;
           }
         }
         return clients.openWindow(targetUrl);
