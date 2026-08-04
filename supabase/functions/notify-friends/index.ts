@@ -179,6 +179,12 @@ Deno.serve(async (req) => {
       const serviceAccount = JSON.parse(serviceAccountStr);
       const projectId = serviceAccount.project_id;
 
+      // FCM data payloads cap at ~4KB — slice long messages here too.
+      const fcmMessageText = (messageText || '').slice(0, 300);
+      const fcmNotifBody = isMessage
+        ? (fcmMessageText || (imageUrl ? '📎 Photo' : 'Sent you a message'))
+        : `"${(statusText || 'Updated their status').slice(0, 300)}"`;
+
       const { data: tokens } = await supabase
         .from('fcm_tokens')
         .select('token, user_id')
@@ -190,31 +196,28 @@ Deno.serve(async (req) => {
 
         for (const { token, user_id } of tokens) {
           try {
+            // DATA-ONLY message: the custom PulseFCMService is the single display
+            // path (channel, dedup, widget all applied). A `notification` block
+            // would let the system tray display it directly, bypassing our
+            // service (no widget update, no dedup) AND double-fire with our
+            // service when the app is foregrounded.
             const message = {
               message: {
                 token,
-                notification: {
-                  title: notifTitle,
-                  body: notifBody
-                },
                 data: {
                   type: isMessage ? 'message' : 'status',
                   friendName: senderName,
+                  senderId: user.id,       // dedup key — names collide, IDs don't
                   emoji: senderEmoji,
-                  statusText: statusText || '',
-                  messageText: messageText || '',
+                  statusText: (statusText || '').slice(0, 300),
+                  messageText: fcmMessageText,
                   imageUrl: imageUrl || '',
-                  url: notifUrl
+                  url: notifUrl,
+                  notifTitle,             // rendered by PulseFCMService
+                  notifBody: fcmNotifBody // rendered by PulseFCMService
                 },
                 android: {
-                  priority: 'high',
-                  notification: {
-                    channel_id: 'pulse_status',
-                    priority: 'high',
-                    default_sound: true,
-                    default_vibrate_timings: true,
-                    icon: 'ic_stat_pulse'
-                  }
+                  priority: 'high'
                 }
               }
             };
@@ -265,6 +268,7 @@ Deno.serve(async (req) => {
       const payload = JSON.stringify({
         type: isMessage ? 'message' : 'status',
         friendName: senderName,
+        senderId: user.id,       // dedup key — names collide, IDs don't
         emoji: senderEmoji,
         statusText: statusText || '',
         messageText: (messageText || '').slice(0, 300),

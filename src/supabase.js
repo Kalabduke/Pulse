@@ -1090,10 +1090,14 @@ export async function savePushSubscription(subscription) {
   if (!user) throw new Error('Not logged in.');
 
   const subJson = subscription.toJSON();
+  // The endpoint column powers the unique (user_id, endpoint) constraint —
+  // without it the upsert references a column that doesn't exist and fails.
+  const endpoint = subJson?.endpoint || '';
   const { error } = await client()
     .from('push_subscriptions')
     .upsert({
       user_id: user.id,
+      endpoint,
       subscription: subJson
     }, { onConflict: 'user_id,endpoint' });
 

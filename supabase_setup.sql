@@ -304,13 +304,43 @@ $$;
 
 -- 7. PUSH SUBSCRIPTIONS TABLE
 -- Stores Web Push subscriptions for background notifications
+-- The endpoint column powers the unique (user_id, endpoint) constraint used by
+-- the app's upsert (onConflict: 'user_id,endpoint').
 create table if not exists public.push_subscriptions (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
+  endpoint text not null default '',
   subscription jsonb not null,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique (user_id, (subscription->>'endpoint'))
+  unique (user_id, endpoint)
 );
+
+-- Migration for EXISTING databases: 'create table if not exists' is a no-op on
+-- a table that already exists, so add the endpoint column explicitly + backfill
+-- it from the stored subscription JSON, then drop the OLD functional unique
+-- constraint (named by Postgres from its columns) and recreate the real one.
+alter table public.push_subscriptions add column if not exists endpoint text not null default '';
+update public.push_subscriptions
+set endpoint = subscription->>'endpoint'
+where endpoint = '' and subscription->>'endpoint' is not null;
+
+do $$
+declare c text;
+begin
+  -- Drop ANY unique constraint except the target one (robust against Postgres'
+  -- auto-generated names, and safe to re-run).
+  for c in
+    select conname from pg_constraint
+    where conrelid = 'public.push_subscriptions'::regclass
+      and contype = 'u'
+      and conname <> 'push_subscriptions_user_id_endpoint_key'
+  loop
+    execute format('alter table public.push_subscriptions drop constraint %I', c);
+  end loop;
+end $$;
+
+alter table public.push_subscriptions drop constraint if exists push_subscriptions_user_id_endpoint_key;
+alter table public.push_subscriptions add constraint push_subscriptions_user_id_endpoint_key unique (user_id, endpoint);
 
 alter table public.push_subscriptions enable row level security;
 

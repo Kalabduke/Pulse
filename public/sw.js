@@ -128,8 +128,9 @@ function showStatusNotification({ friendName, emoji, statusText, url = '/', user
 }
 
 // DM notification — same dedup + visibility logic as status, plus Reply action
-function showMessageNotification({ friendName, emoji, messageText, url = '/', imageUrl = '' }) {
-  const tag = `pulse-msg-${friendName}`;
+function showMessageNotification({ friendName, emoji, messageText, url = '/', imageUrl = '', senderId = '' }) {
+  // Use senderId as dedup key — same-name users no longer collide
+  const tag = `pulse-msg-${senderId || friendName}`;
   const now = Date.now();
   const recentlySent = _swNotifTimes[tag] && (now - _swNotifTimes[tag] < 8000);
   _swNotifTimes[tag] = now;
@@ -171,6 +172,7 @@ self.addEventListener('push', (event) => {
   let imageUrl = '';
   let url = '/';
   let type = 'status';
+  let senderId = '';
 
   if (event.data) {
     try {
@@ -182,15 +184,16 @@ self.addEventListener('push', (event) => {
       messageText = d.messageText || '';
       imageUrl    = d.imageUrl    || '';
       url         = d.url         || url;
+      senderId    = d.senderId    || d.userId || senderId;
     } catch {
       statusText = event.data.text() || statusText;
     }
   }
 
   if (type === 'message') {
-    event.waitUntil(showMessageNotification({ friendName, emoji, messageText, imageUrl, url }));
+    event.waitUntil(showMessageNotification({ friendName, emoji, messageText, imageUrl, url, senderId }));
   } else {
-    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url }));
+    event.waitUntil(showStatusNotification({ friendName, emoji, statusText, url, userId: senderId }));
   }
 });
 

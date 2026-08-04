@@ -1,12 +1,9 @@
 package com.pulse.statusapp;
 
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.os.Build;
 import android.os.SystemClock;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -15,45 +12,92 @@ import com.google.firebase.messaging.RemoteMessage;
 
 public class PulseFCMService extends FirebaseMessagingService {
 
-    private static final String CHANNEL_ID      = "pulse_status";
-    private static final String CHANNEL_NAME    = "Friend Status Updates";
-    private static final String CHANNEL_DESC    = "Notified when a friend updates their Pulse status";
+    private static final String CHANNEL_ID      = PulseChannels.CHANNEL_ID;
     private static final String GROUP_KEY       = "com.pulse.statusapp.STATUS_GROUP";
     private static final int    GROUP_NOTIF_ID  = 0;
     private static final String PREFS_NAME      = "PulsePrefs";
+
+    // Set by MainActivity — when the app is open the in-app realtime toasts
+    // handle updates, so we skip the OS notification (matches the web SW which
+    // checks app visibility).
+    public static volatile boolean appForeground = false;
 
     @Override
     public void onMessageReceived(RemoteMessage remoteMessage) {
         super.onMessageReceived(remoteMessage);
 
-        String friendName = "A friend";
-        String emoji      = "💫";
-        String statusText = "Updated their status";
+        // The edge function sends a DATA-ONLY message (no notification block) so
+        // this service is the single display path. It supplies type, senderId,
+        // notifTitle/notifBody (pre-rendered) plus the raw fields for the widget.
+        String type        = "status";
+        String friendName  = "A friend";
+        String senderId    = "";
+        String emoji       = "💫";
+        String statusText  = "Updated their status";
+        String messageText = "";
+        String imageUrl    = "";
+        String notifTitle  = "";
+        String notifBody   = "";
 
         if (remoteMessage.getData().size() > 0) {
-            friendName = remoteMessage.getData().getOrDefault("friendName", friendName);
-            emoji      = remoteMessage.getData().getOrDefault("emoji",      emoji);
-            statusText = remoteMessage.getData().getOrDefault("statusText", statusText);
+            type        = remoteMessage.getData().getOrDefault("type",        type);
+            friendName  = remoteMessage.getData().getOrDefault("friendName",  friendName);
+            senderId    = remoteMessage.getData().getOrDefault("senderId",    senderId);
+            emoji       = remoteMessage.getData().getOrDefault("emoji",       emoji);
+            statusText  = remoteMessage.getData().getOrDefault("statusText",  statusText);
+            messageText = remoteMessage.getData().getOrDefault("messageText", messageText);
+            imageUrl    = remoteMessage.getData().getOrDefault("imageUrl",    imageUrl);
+            notifTitle  = remoteMessage.getData().getOrDefault("notifTitle",  notifTitle);
+            notifBody   = remoteMessage.getData().getOrDefault("notifBody",   notifBody);
         }
 
-        // Dedup: skip if same friend notified within 8 seconds
+        boolean isMessage = "message".equals(type);
+        // Prefer the edge function's rendered title/body; fall back to building
+        // them locally (older edge-function deploys without notifTitle/notifBody).
+        if (notifTitle.isEmpty()) {
+            notifTitle = emoji + " " + friendName;
+        }
+        if (notifBody.isEmpty()) {
+            notifBody = isMessage
+                ? (messageText.isEmpty()
+                    ? (imageUrl.isEmpty() ? "Sent you a message" : "📎 Photo")
+                    : messageText)
+                : "\u201c" + statusText + "\u201d";
+        }
+        String body = notifBody;
+
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-        String dedupKey  = "lastNotif_" + friendName;
+
+        // App is open — realtime toasts already notify the user; skip the OS
+        // notification entirely (but still update the widget).
+        if (appForeground) {
+            saveForWidget(prefs, senderId, friendName, emoji, isMessage, body, statusText);
+            return;
+        }
+
+        // Dedup: skip if same sender notified within 8 seconds (use ID, not name)
+        String dedupKey  = "lastNotif_" + (senderId.isEmpty() ? friendName : senderId);
         long   lastTime  = prefs.getLong(dedupKey, 0);
         long   now       = SystemClock.elapsedRealtime();
         if (now - lastTime < 8000) return;
 
-        // Save for widget + dedup
+        saveForWidget(prefs, senderId, friendName, emoji, isMessage, body, statusText);
+        prefs.edit().putLong(dedupKey, now).apply();
+
+        showNotification(notifTitle, body);
+    }
+
+    // Persist the latest update for the home-screen widget (shared with dedup prefs).
+    private void saveForWidget(SharedPreferences prefs, String senderId, String friendName,
+                               String emoji, boolean isMessage, String body, String statusText) {
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("latestFriendName", friendName);
         editor.putString("latestEmoji",      emoji);
-        editor.putString("latestStatus",     statusText);
+        editor.putString("latestStatus",     isMessage ? body : statusText);
         editor.putLong("latestTime",         System.currentTimeMillis());
-        editor.putLong(dedupKey,             now);
         editor.apply();
 
         PulseWidget.updateAllWidgets(this);
-        showNotification(friendName, emoji, statusText);
     }
 
     @Override
@@ -62,25 +106,25 @@ public class PulseFCMService extends FirebaseMessagingService {
         // Token refresh handled by Capacitor in the WebView
     }
 
-    private void showNotification(String friendName, String emoji, String statusText) {
-        createNotificationChannel();
+    private void showNotification(String title, String body) {
+        PulseChannels.ensure(this);
 
         Intent intent = new Intent(this, MainActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(
-            this, friendName.hashCode(), intent,
+            this, title.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        // Individual notification per friend — replaces itself via tag
-        int notifId = Math.abs(friendName.hashCode());
+        // Individual notification per sender — replaced when a new one arrives
+        int notifId = Math.abs(title.hashCode());
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_pulse)
-            .setContentTitle(emoji + " " + friendName)
-            .setContentText("\u201c" + statusText + "\u201d")
+            .setContentTitle(title)
+            .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle()
-                .bigText("\u201c" + statusText + "\u201d")
+                .bigText(body)
                 .setSummaryText("Pulse"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_SOCIAL)
@@ -117,23 +161,4 @@ public class PulseFCMService extends FirebaseMessagingService {
         } catch (SecurityException ignored) {}
     }
 
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_HIGH
-            );
-            channel.setDescription(CHANNEL_DESC);
-            channel.enableVibration(true);
-            channel.setVibrationPattern(new long[]{0, 150, 80, 150});
-            channel.setShowBadge(true);
-            channel.enableLights(true);
-
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
-            }
-        }
-    }
 }

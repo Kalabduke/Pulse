@@ -304,6 +304,13 @@ async function checkNavigationState() {
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
       setTimeout(registerFCMToken, 4000);
+      // Returning users who already granted permission never see the banner —
+      // re-subscribe silently so their push subscription stays valid.
+      setTimeout(() => {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          subscribeToPushNotifications().catch(() => {});
+        }
+      }, 5000);
       startHeartbeat();
       resumeLocationSharing();
       handleDeepLinks();
