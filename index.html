@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- Zoom is allowed in browsers (pinch / Ctrl+scroll / double-tap). The APK
+       stays zoom-locked via MainActivity WebView settings instead — removing
+       the user-scalable=no lock here is what lets the web build zoom freely. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Pulse - Real-time Status Updates</title>
   
   <meta name="description" content="Real-time emotional & health status updates on your lock screen & notifications with close friends.">

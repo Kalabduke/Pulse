@@ -2834,19 +2834,20 @@ button svg {
 /* ==========================================
    PROPORTIONAL SCALING (no user zoom needed)
    ==========================================
-   The app is designed as a 480px phone column. On bigger screens we scale
-   the whole UI up uniformly so it stays proportional to the display instead
-   of looking tiny — pinch-zoom is locked, so this is how it self-fits.
-   Media queries evaluate against the real viewport, so these never loop. */
-@media (min-width: 700px) {
-  html { zoom: 1.22; }
-}
-@media (min-width: 900px) {
-  html { zoom: 1.38; }
-}
+   The app is designed as a 480px phone column. On very wide desktop windows
+   we scale it up gently so it never looks tiny — but only a little, so it
+   never looks blown-up either. Phones, tablets and laptops up to ~1100px
+   stay at natural 1:1. Media queries evaluate the real viewport, so these
+   never loop. */
 @media (min-width: 1100px) {
-  html { zoom: 1.52; }
+  html { zoom: 1.04; }
 }
-@media (min-width: 1300px) {
-  html { zoom: 1.66; }
+@media (min-width: 1400px) {
+  html { zoom: 1.1; }
+}
+@media (min-width: 1700px) {
+  html { zoom: 1.16; }
+}
+@media (min-width: 2000px) {
+  html { zoom: 1.22; }
 }

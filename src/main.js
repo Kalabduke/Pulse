@@ -2946,6 +2946,9 @@ function initEventListeners() {
 
     // Always re-enable emoji picker on modal open
     _setEmojiPickerDisabled(false);
+    // Reset the emoji to the user's CURRENT status emoji — never carry over a
+    // stale "last used" emoji into the saved status (and its history entry)
+    selectEmoji(state.userProfile?.status_emoji || '😊');
     // If user already has an image set, disable emoji picker
     if (state.userProfile?.status_image_url && !isStatusImageRemoved) {
       _setEmojiPickerDisabled(true);
