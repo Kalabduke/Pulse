@@ -590,6 +590,8 @@ alter table public.profiles add column if not exists username text;
 alter table public.profiles add column if not exists username_chosen boolean default false;
 -- User tapped "Skip for now" on onboarding — don't nag them on every launch.
 alter table public.profiles add column if not exists skip_username boolean default false;
+-- Change history for the 2x/week username rename cooldown (timestamps of renames).
+alter table public.profiles add column if not exists username_changes timestamptz[] default '{}';
 
 -- 2. Case-insensitive uniqueness — no two users can share a username
 create unique index if not exists profiles_username_lower_idx on public.profiles (lower(username));
@@ -621,6 +623,8 @@ $$;
 
 -- 4. RPC: validate + claim a username atomically (enforces uniqueness server-side).
 --    Sets username_chosen = true so the app knows the user picked their own handle.
+--    Enforces a cooldown: a username can be CHANGED at most 2 times per rolling 7 days.
+--    (First-time claims and confirming the same handle are free — only renames count.)
 create or replace function public.set_my_username(new_username text)
 returns text
 language plpgsql security definer
@@ -628,6 +632,9 @@ set search_path = public
 as $$
 declare
   clean text;
+  changes timestamptz[];
+  recent timestamptz[];
+  next_allowed timestamptz;
 begin
   clean := lower(btrim(regexp_replace(new_username, '^@+', '')));
   if clean is null or clean = '' then
@@ -639,7 +646,36 @@ begin
   if exists (select 1 from public.profiles where lower(username) = clean and id <> auth.uid()) then
     raise exception 'That username is already taken';
   end if;
-  update public.profiles set username = clean, username_chosen = true, updated_at = now() where id = auth.uid();
+
+  -- Load change history (row-locked so two concurrent renames can't both
+  -- pass the cooldown check and bypass the 2x/week limit)
+  select coalesce(username_changes, '{}'::timestamptz[]) into changes
+  from public.profiles where id = auth.uid()
+  for update;
+
+  recent := array(
+    select t from unnest(changes) t where t > now() - interval '7 days' order by t
+  );
+
+  -- A rename that keeps the same handle is free (user confirming/editing case)
+  if exists (select 1 from public.profiles where id = auth.uid() and lower(username) = clean) then
+    update public.profiles set username_chosen = true, updated_at = now() where id = auth.uid();
+    return clean;
+  end if;
+
+  -- Cooldown: max 2 changes in any rolling 7-day window
+  if array_length(recent, 1) >= 2 then
+    next_allowed := recent[1] + interval '7 days';
+    raise exception 'Username can only be changed twice a week. Try again after % (UTC).',
+      to_char(next_allowed, 'YYYY-MM-DD HH24:MI');
+  end if;
+
+  update public.profiles
+  set username = clean,
+      username_chosen = true,
+      username_changes = array_append(recent, now()),
+      updated_at = now()
+  where id = auth.uid();
   return clean;
 end;
 $$;
@@ -693,3 +729,299 @@ where username is not null and username <> '' and username_chosen is not true;
 -- 9. Users who already have a username never need onboarding, and anyone
 --    who skipped it shouldn't be re-nagged on every reload.
 update public.profiles set skip_username = false where username is not null and username <> '';
+
+-- ====================================================================
+-- GROUPS — group chat with any subset of your friends
+-- ====================================================================
+
+-- 1. Groups
+create table if not exists public.groups (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  created_by uuid references public.profiles(id) on delete cascade not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+alter table public.groups enable row level security;
+
+-- 2. Group memberships
+create table if not exists public.group_members (
+  group_id uuid references public.groups(id) on delete cascade not null,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  joined_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  primary key (group_id, user_id)
+);
+alter table public.group_members enable row level security;
+
+-- 3. Group messages (simple: text + optional image)
+create table if not exists public.group_messages (
+  id uuid default gen_random_uuid() primary key,
+  group_id uuid references public.groups(id) on delete cascade not null,
+  sender_id uuid references public.profiles(id) on delete cascade not null,
+  content_text text,
+  image_url text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+alter table public.group_messages enable row level security;
+
+-- 4. RLS policies
+
+drop policy if exists "Members can view their groups" on public.groups;
+create policy "Members can view their groups" on public.groups
+  for select using (
+    exists (select 1 from public.group_members gm where gm.group_id = id and gm.user_id = auth.uid())
+  );
+
+drop policy if exists "Users can create groups" on public.groups;
+create policy "Users can create groups" on public.groups
+  for insert with check (created_by = auth.uid());
+
+drop policy if exists "Group creators can manage their groups" on public.groups;
+create policy "Group creators can manage their groups" on public.groups
+  for update using (created_by = auth.uid());
+
+drop policy if exists "Members can view group memberships" on public.group_members;
+create policy "Members can view group memberships" on public.group_members
+  for select using (
+    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
+  );
+
+drop policy if exists "Creators can add members" on public.group_members;
+create policy "Creators can add members" on public.group_members
+  for insert with check (
+    exists (select 1 from public.groups g where g.id = group_id and g.created_by = auth.uid())
+  );
+
+drop policy if exists "Members can leave groups" on public.group_members;
+create policy "Members can leave groups" on public.group_members
+  for delete using (
+    user_id = auth.uid() or
+    exists (select 1 from public.groups g where g.id = group_id and g.created_by = auth.uid())
+  );
+
+-- Creator can delete the whole group (cascades to members + messages).
+drop policy if exists "Group creators can delete their groups" on public.groups;
+create policy "Group creators can delete their groups" on public.groups
+  for delete using (created_by = auth.uid());
+
+drop policy if exists "Members can view group messages" on public.group_messages;
+create policy "Members can view group messages" on public.group_messages
+  for select using (
+    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
+  );
+
+drop policy if exists "Members can send group messages" on public.group_messages;
+create policy "Members can send group messages" on public.group_messages
+  for insert with check (
+    sender_id = auth.uid() and
+    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
+  );
+
+-- 5. Indexes (safe — no locks on other sessions)
+create index if not exists group_messages_group_idx on public.group_messages (group_id, created_at);
+create index if not exists group_members_user_idx on public.group_members (user_id);
+
+-- ====================================================================
+-- GROUP ROLES + RENAME (Telegram-style: creator/admin/member)
+-- ====================================================================
+
+alter table public.group_members add column if not exists role text not null default 'member';
+-- Role can only ever be creator/admin/member (prevents forged 'creator' rows)
+alter table public.group_members drop constraint if exists group_members_role_check;
+alter table public.group_members add constraint group_members_role_check check (role in ('creator', 'admin', 'member'));
+alter table public.groups add column if not exists updated_at timestamptz default timezone('utc'::text, now());
+
+-- Helper: is the caller a creator or admin of this group? (RLS + RPC shared)
+-- NOTE: the creator always counts as admin, even if their group_members row
+-- hasn't been role-backfilled yet (new groups insert the creator as 'member').
+create or replace function public.is_group_admin(gid uuid)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.group_members gm
+    where gm.group_id = gid
+      and gm.user_id = auth.uid()
+      and gm.role in ('creator', 'admin')
+  )
+  or exists (
+    select 1 from public.groups g
+    where g.id = gid and g.created_by = auth.uid()
+  );
+$$;
+
+-- Members can add: creator OR any admin (replaces creator-only).
+-- New rows always start as plain 'member' — promotions happen via the
+-- set_group_member_role RPC, so an admin can't forge a 'creator' row.
+drop policy if exists "Creators can add members" on public.group_members;
+drop policy if exists "Members can add members" on public.group_members;
+create policy "Members can add members" on public.group_members
+  for insert with check (
+    public.is_group_admin(group_id) and role = 'member'
+  );
+
+-- Self-service update: each user may bump their own last_read_at watermark
+-- (read receipts). Roles are only changed via the RPC.
+drop policy if exists "Users can update their own membership" on public.group_members;
+create policy "Users can update their own membership" on public.group_members
+  for update using (user_id = auth.uid())
+  with check (user_id = auth.uid() and role = (select role from public.group_members where group_id = group_id and user_id = auth.uid()));
+
+-- Members can leave, admins/creator can remove
+-- (existing "Members can leave groups" policy already covers self + creator;
+--  extend so admins can also remove anyone)
+drop policy if exists "Members can leave groups" on public.group_members;
+create policy "Members can leave groups" on public.group_members
+  for delete using (
+    user_id = auth.uid() or public.is_group_admin(group_id)
+  );
+
+-- Creator or admins can rename the group
+-- (existing "Group creators can manage their groups" is creator-only; extend)
+drop policy if exists "Group creators can manage their groups" on public.groups;
+create policy "Admins can update groups" on public.groups
+  for update using (public.is_group_admin(id));
+
+-- RPC: change a member's role (creator-only; cannot touch the creator)
+create or replace function public.set_group_member_role(p_group_id uuid, p_user_id uuid, p_role text)
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  if p_role not in ('admin', 'member') then
+    raise exception 'Role must be admin or member';
+  end if;
+  if not exists (
+    select 1 from public.group_members
+    where group_id = p_group_id and user_id = auth.uid() and role = 'creator'
+  ) then
+    raise exception 'Only the group creator can change roles';
+  end if;
+  if p_user_id in (select created_by from public.groups where id = p_group_id) then
+    raise exception 'The creator role cannot be changed';
+  end if;
+  update public.group_members set role = p_role
+  where group_id = p_group_id and user_id = p_user_id;
+end;
+$$;
+
+-- Keep the creator's own membership row marked 'creator'
+update public.group_members gm
+set role = 'creator'
+from public.groups g
+where gm.group_id = g.id and gm.user_id = g.created_by;
+
+-- ====================================================================
+-- GROUP TYPING INDICATORS
+-- ====================================================================
+
+create table if not exists public.group_typing (
+  group_id uuid references public.groups(id) on delete cascade not null,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  updated_at timestamptz default now() not null,
+  primary key (group_id, user_id)
+);
+alter table public.group_typing enable row level security;
+
+drop policy if exists "Members can view group typing" on public.group_typing;
+create policy "Members can view group typing" on public.group_typing
+  for select using (
+    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
+  );
+
+drop policy if exists "Members can manage their own typing" on public.group_typing;
+create policy "Members can manage their own typing" on public.group_typing
+  for all to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- ====================================================================
+-- GROUP READ RECEIPTS ("seen by")
+-- last_read_at on each membership = the watermark for read receipts
+-- ====================================================================
+
+alter table public.group_members add column if not exists last_read_at timestamptz;
+
+-- ====================================================================
+-- ACCOUNT DEACTIVATION + DELETION (Instagram-style)
+-- ====================================================================
+
+alter table public.profiles add column if not exists deactivated_at timestamptz default null;
+alter table public.profiles add column if not exists deletion_requested_at timestamptz default null;
+
+-- Deactivate: reversible, hides me, login reactivates
+create or replace function public.deactivate_my_account()
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  update public.profiles
+  set deactivated_at = now(), updated_at = now()
+  where id = auth.uid();
+end;
+$$;
+
+-- Called automatically on login if the user had deactivated
+create or replace function public.reactivate_my_account()
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  update public.profiles
+  set deactivated_at = null, updated_at = now()
+  where id = auth.uid();
+end;
+$$;
+
+-- Permanent deletion: 30-day grace period, cancellable
+create or replace function public.request_account_deletion()
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  update public.profiles
+  set deletion_requested_at = now(), updated_at = now()
+  where id = auth.uid();
+end;
+$$;
+
+create or replace function public.cancel_account_deletion()
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  update public.profiles
+  set deletion_requested_at = null, updated_at = now()
+  where id = auth.uid();
+end;
+$$;
+
+-- 6. Realtime for group messages.
+--    NOTE: keep this as its OWN statement (run it separately, after the rest
+--    of the script succeeds). "ALTER PUBLICATION" takes an AccessExclusiveLock
+--    that can deadlock against the app's live realtime subscriptions; if the
+--    SQL editor runs it inside one big transaction the whole script rolls back.
+--    If you hit "deadlock detected", just close the Pulse tab and re-run ONLY:
+--      select public.ensure_group_realtime();
+create or replace function public.ensure_group_realtime()
+returns void
+language plpgsql security definer
+set search_path = public
+as $$
+begin
+  begin
+    alter publication supabase_realtime add table public.group_messages;
+  exception when duplicate_object then null; end;
+  begin
+    alter publication supabase_realtime add table public.group_typing;
+  exception when duplicate_object then null; end;
+  begin
+    alter publication supabase_realtime add table public.group_members;
+  exception when duplicate_object then null; end;
+end;
+$$;

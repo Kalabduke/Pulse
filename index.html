@@ -167,6 +167,7 @@
         <div style="display: flex; gap: 8px; align-items: center;">
           <button id="btn-location" class="btn btn-secondary btn-small location-btn" style="padding:8px 12px;" title="Share live location"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></button>
           <button id="btn-notif" class="btn btn-secondary btn-small" style="padding:8px 10px;" title="Notifications"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button>
+          <button id="btn-account" class="btn btn-secondary btn-small" style="padding:8px 10px;" title="Account settings"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
           <button id="btn-signout" class="btn btn-secondary" style="padding: 8px 16px; font-size: 13px;">Sign Out</button>
         </div>
       </header>
@@ -200,7 +201,7 @@
             </span>
             <div style="display:flex;gap:6px;flex-shrink:0;">
               <button id="btn-share-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;" title="Share invite link"><svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg> Share</button>
-              <button id="btn-copy-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;"><svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg> Copy</button>
+              <button id="btn-rename-username" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;" title="Rename your username"><svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg> Rename</button>
             </div>
           </div>
         </div>
@@ -235,6 +236,17 @@
             <div id="pending-invites-container" class="friends-list">
               <div style="font-size: 13px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No pending requests.</div>
             </div>
+          </div>
+        </div>
+
+        <!-- Groups -->
+        <div class="glass-card" style="margin-top: 8px;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <h3 class="section-title" style="font-size:16px;">👥 Groups</h3>
+            <button id="btn-create-group" class="btn btn-primary btn-small" style="padding: 8px 14px; border-radius: 12px; font-weight: 600;">+ New Group</button>
+          </div>
+          <div id="groups-container" class="friends-list">
+            <div style="font-size: 13px; color: hsl(var(--text-muted)); font-style: italic; padding: 4px 0;">No groups yet — create one to chat with your friends together!</div>
           </div>
         </div>
 
@@ -328,12 +340,6 @@
           <div style="display: flex; flex-direction: column; gap: 6px;">
             <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">MY DISPLAY NAME</label>
             <input type="text" id="status-name-input" class="input-field" placeholder="Your name">
-          </div>
-
-          <div style="display: flex; flex-direction: column; gap: 6px;">
-            <label style="font-size: 12px; font-weight: 600; color: hsl(var(--text-secondary));">USERNAME (@handle)</label>
-            <input type="text" id="status-username-input" class="input-field" placeholder="your_username" maxlength="32" autocomplete="off" spellcheck="false" style="font-family: monospace; letter-spacing: 0.2px;">
-            <div id="status-username-hint" class="char-counter" style="margin-top:2px;">5-32 chars · letters, numbers, underscores · unique</div>
           </div>
 
           <div>
@@ -443,18 +449,110 @@
     </div>
   </div>
 
-  <!-- Username Onboarding Modal (shown to new signups until they pick a handle) -->
+  <!-- Username Modal — mandatory onboarding for new users + rename for everyone (2x/week limit) -->
   <div id="username-onboarding-modal" class="custom-modal-overlay" style="display:none;">
     <div class="custom-modal-box">
       <div class="custom-modal-icon">👤</div>
-      <h3 class="custom-modal-title">Choose your @username</h3>
-      <p class="custom-modal-body">This is how friends find and connect with you. You can change it anytime.</p>
+      <h3 class="custom-modal-title" id="username-modal-title">Choose your @username</h3>
+      <p class="custom-modal-body" id="username-modal-body">This is how friends find and connect with you. Usernames are unique — no two people can share one.</p>
       <input type="text" id="username-onboarding-input" class="input-field" placeholder="your_username" maxlength="32" autocomplete="off" spellcheck="false" style="font-family: monospace; letter-spacing: 0.2px; margin-bottom: 4px;">
       <div id="username-onboarding-hint" class="char-counter" style="margin-bottom: 4px;">5-32 chars · letters, numbers, underscores · unique</div>
       <div class="custom-modal-actions">
-        <button id="username-onboarding-skip" class="btn btn-secondary" style="flex:1;">Skip for now</button>
         <button id="username-onboarding-save" class="btn btn-primary" style="flex:1;">Save</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Create Group Modal -->
+  <div id="group-create-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box">
+      <div class="custom-modal-icon">👥</div>
+      <h3 class="custom-modal-title">New Group</h3>
+      <p class="custom-modal-body">Name your group and pick friends to add. You can add all of them or just some.</p>
+      <input type="text" id="group-name-input" class="input-field" placeholder="Group name" maxlength="40" autocomplete="off" spellcheck="false" style="margin-bottom: 10px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span class="field-label" style="margin:0;font-size:12px;">MEMBERS <span id="group-picker-count" class="section-count">0</span></span>
+        <button id="group-picker-select-all" class="btn btn-secondary btn-small" style="padding:4px 10px;font-size:11px;">Select all</button>
+      </div>
+      <div id="group-member-picker" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;margin-bottom:12px;"></div>
+      <div class="custom-modal-actions">
+        <button id="group-create-cancel" class="btn btn-secondary" style="flex:1;">Cancel</button>
+        <button id="group-create-save" class="btn btn-primary" style="flex:1;">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manage Group Modal (Telegram-style group info: add / remove / leave / delete) -->
+  <div id="group-manage-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box" style="max-width:400px;">
+      <div class="custom-modal-icon">👥</div>
+      <h3 class="custom-modal-title" id="group-manage-title">Group</h3>
+      <p class="custom-modal-body" id="group-manage-subtitle" style="font-size:12px;"></p>
+      <!-- Rename group (creator/admin only) -->
+      <div id="group-rename-row" style="display:none;gap:6px;margin-bottom:10px;align-items:center;">
+        <input type="text" id="group-rename-input" class="input-field" placeholder="Group name" maxlength="40" autocomplete="off" spellcheck="false" style="flex:1;font-size:13px;padding:9px 12px;">
+        <button id="group-rename-save" class="btn btn-primary btn-small" style="padding:9px 14px;border-radius:10px;">Save</button>
+      </div>
+      <div id="group-manage-members" style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;margin-bottom:12px;"></div>
+      <div class="custom-modal-actions" style="flex-wrap:wrap;gap:8px;">
+        <button id="group-manage-rename-toggle" class="btn btn-secondary" style="flex:1;min-width:120px;">✏️ Rename</button>
+        <button id="group-manage-add" class="btn btn-primary" style="flex:1;min-width:120px;">+ Add Member</button>
+        <button id="group-manage-leave" class="btn btn-secondary" style="flex:1;min-width:120px;">Leave Group</button>
+      </div>
+      <button id="group-manage-delete" class="btn btn-secondary" style="width:100%;margin-top:8px;color:hsl(356 70% 60%);border-color:rgba(255,80,80,0.3);">Delete Group</button>
+      <button id="group-manage-close" class="btn btn-secondary" style="width:100%;margin-top:8px;">Close</button>
+    </div>
+  </div>
+
+  <!-- Add Members Modal (creator adds more friends) -->
+  <div id="group-add-members-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box">
+      <div class="custom-modal-icon">➕</div>
+      <h3 class="custom-modal-title">Add Members</h3>
+      <p class="custom-modal-body">Pick connected friends to add to <span id="group-add-name"></span>.</p>
+      <div id="group-add-picker" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;margin-bottom:12px;"></div>
+      <div class="custom-modal-actions">
+        <button id="group-add-cancel" class="btn btn-secondary" style="flex:1;">Cancel</button>
+        <button id="group-add-save" class="btn btn-primary" style="flex:1;">Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Chat View (full-screen, mirrors DM chat) -->
+  <div id="group-chat-view" class="view-container" style="display:none; padding:0; height:100vh;">
+    <div class="chat-header">
+      <button id="group-chat-back-btn" class="btn btn-small btn-secondary" style="padding:8px 12px; font-size:13px;"><svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg> Back</button>
+      <div class="chat-header-info" id="group-chat-info-btn" style="cursor:pointer;" title="Group info">
+        <span class="chat-header-emoji">👥</span>
+        <span>
+          <span id="group-chat-name" class="chat-header-name" style="display:block;">Group</span>
+          <span id="group-chat-meta" style="font-size:12px;color:hsl(var(--text-muted));"></span>
+        </span>
+      </div>
+      <div class="chat-header-actions"></div>
+    </div>
+    <div id="group-chat-messages" class="chat-messages"></div>
+    <div id="group-typing-indicator" class="chat-typing-indicator" style="display:none;">typing…</div>
+    <div class="chat-input-area">
+      <!-- Mention picker (type @ in group chat) — positioned above the input bar -->
+      <div id="group-mention-picker" class="group-mention-picker" style="display:none;"></div>
+      <div class="chat-input-row">
+        <textarea id="group-chat-input" class="chat-text-input" placeholder="Type a message..." maxlength="500" rows="1"></textarea>
+        <button id="group-chat-send" class="chat-send-btn"><svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Account Settings Modal (Instagram-style deactivate / delete) -->
+  <div id="account-modal" class="custom-modal-overlay" style="display:none;">
+    <div class="custom-modal-box" style="max-width:400px;">
+      <div class="custom-modal-icon">⚙️</div>
+      <h3 class="custom-modal-title">Account</h3>
+      <p class="custom-modal-body" id="account-modal-status" style="font-size:12px;"></p>
+      <button id="btn-deactivate-account" class="btn btn-secondary" style="width:100%;margin-bottom:8px;">😴 Temporarily deactivate account</button>
+      <button id="btn-delete-account" class="btn btn-secondary" style="width:100%;color:hsl(356 70% 60%);border-color:rgba(255,80,80,0.3);">🗑️ Permanently delete account</button>
+      <button id="btn-cancel-deletion" class="btn btn-primary" style="width:100%;margin-top:8px;display:none;">↩️ Cancel deletion</button>
+      <button id="btn-account-close" class="btn btn-secondary" style="width:100%;margin-top:8px;">Close</button>
     </div>
   </div>
 

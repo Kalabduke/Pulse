@@ -248,18 +248,6 @@ export async function setMyUsername(newUsername) {
   return data;
 }
 
-// User tapped "Skip for now" on the username onboarding modal — persist it so
-// the modal doesn't reappear on every app launch.
-export async function markUsernameSkipped() {
-  const { data: { user } } = await client().auth.getUser();
-  if (!user) throw new Error('Not logged in.');
-  const { error } = await client()
-    .from('profiles')
-    .update({ skip_username: true, updated_at: new Date().toISOString() })
-    .eq('id', user.id);
-  if (error) throw new Error(error.message || 'Could not save preference.');
-}
-
 // Best-effort: make sure my profile has a username (auto-claim from display
 // name if the backfill hasn't run yet). Mirrors the SQL next_username() by
 // retrying with a numeric suffix when the base name is taken. Never blocks.
@@ -1214,4 +1202,322 @@ export function subscribeToPulseSync(userId, callback, friendIds = []) {
     .subscribe((status) => {
       console.log('[Pulse] Realtime channel status:', status);
     });
+}
+
+/* ==========================================
+   GROUPS (group chat with any subset of friends)
+   ========================================== */
+
+// Create a group with a name + a list of member user IDs (RLS allows the
+// creator to insert the group row and every member row). Returns the group.
+export async function createGroup(name, memberIds) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const trimmed = (name || '').trim();
+  if (!trimmed) throw new Error('Group name is required.');
+  if (trimmed.length > 40) throw new Error('Group name must be 40 characters or less.');
+  if (!Array.isArray(memberIds) || memberIds.length === 0) {
+    throw new Error('Pick at least one friend.');
+  }
+
+  const { data: group, error } = await client()
+    .from('groups')
+    .insert({ name: trimmed, created_by: user.id })
+    .select()
+    .single();
+  if (error) throw error;
+
+  const members = [...new Set([user.id, ...memberIds])].map(uid => ({
+    group_id: group.id,
+    user_id: uid
+  }));
+  const { error: mErr } = await client().from('group_members').insert(members);
+  if (mErr) throw mErr;
+
+  return group;
+}
+
+// Groups I belong to, with member profiles attached.
+export async function fetchMyGroups() {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) return [];
+
+  const { data: memberships, error } = await client()
+    .from('group_members')
+    .select('group_id')
+    .eq('user_id', user.id);
+  if (error) throw error;
+
+  const groupIds = (memberships || []).map(m => m.group_id);
+  if (groupIds.length === 0) return [];
+
+  const { data: groups, error: gErr } = await client()
+    .from('groups')
+    .select('*')
+    .in('id', groupIds)
+    .order('created_at', { ascending: false });
+  if (gErr) throw gErr;
+
+  // Attach member profiles to each group
+  const result = await Promise.all((groups || []).map(async (g) => {
+    const { data: rows, error: mErr2 } = await client()
+      .from('group_members')
+      .select('user_id, profiles:user_id(id, name, username)')
+      .eq('group_id', g.id);
+    return {
+      ...g,
+      members: (rows || []).map(r => r.profiles).filter(Boolean)
+    };
+  }));
+  return result;
+}
+
+// Last N messages of a group, oldest-first for display.
+export async function fetchGroupMessages(groupId, limit = 50) {
+  const { data, error } = await client()
+    .from('group_messages')
+    .select('*, sender:sender_id(id, name, username)')
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data || []).reverse();
+}
+
+// Send a text (optionally with image URL) message to a group.
+export async function sendGroupMessage(groupId, text, imageUrl = null) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  if (!text?.trim() && !imageUrl) throw new Error('Message cannot be empty.');
+  if (text && text.length > 500) throw new Error('Message too long. Max 500 characters.');
+
+  const { data, error } = await client()
+    .from('group_messages')
+    .insert({
+      group_id: groupId,
+      sender_id: user.id,
+      content_text: text || null,
+      image_url: imageUrl || null
+    })
+    .select('*, sender:sender_id(id, name, username)')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Realtime subscription for one group's messages, membership, typing + reads.
+// callback({ type: 'message', record })
+// callback({ type: 'members_changed' })
+// callback({ type: 'typing', user_id, typing })
+// callback({ type: 'reads_changed' })
+export function subscribeToGroupMessages(groupId, callback) {
+  if (!isSupabaseConfigured()) return null;
+  return client()
+    .channel(`group-chat-${groupId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` },
+      (payload) => callback({ type: 'message', record: payload.new })
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'group_members', filter: `group_id=eq.${groupId}` },
+      (payload) => callback({
+        type: payload.eventType === 'UPDATE' ? 'reads_changed' : 'members_changed',
+        record: payload.new
+      })
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'group_typing', filter: `group_id=eq.${groupId}` },
+      (payload) => callback({
+        type: 'typing',
+        user_id: (payload.new || payload.old)?.user_id,
+        typing: payload.eventType === 'INSERT' || payload.eventType === 'UPDATE'
+      })
+    )
+    .subscribe((status) => {
+      console.log('[Pulse] Group channel status:', status);
+    });
+}
+
+/* ==========================================
+   GROUP MEMBER MANAGEMENT + PUSH
+   ========================================== */
+
+// Fresh member list for a group (with profiles) — used by the manage modal.
+export async function fetchGroupMembers(groupId) {
+  const { data, error } = await client()
+    .from('group_members')
+    .select('user_id, joined_at, profiles:user_id(id, name, username)')
+    .eq('group_id', groupId);
+  if (error) throw error;
+  return (data || [])
+    .map(r => ({ ...(r.profiles || {}), joined_at: r.joined_at }))
+    .filter(Boolean);
+}
+
+// Creator adds more members (RLS: only the group creator can insert member rows).
+export async function addGroupMembers(groupId, memberIds) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+  if (!Array.isArray(memberIds) || memberIds.length === 0) {
+    throw new Error('Pick at least one friend.');
+  }
+  const rows = [...new Set(memberIds)].map(uid => ({ group_id: groupId, user_id: uid }));
+  const { error } = await client().from('group_members').insert(rows);
+  if (error) throw error;
+}
+
+// Creator removes a member (RLS: creator or self can delete member rows).
+export async function removeGroupMember(groupId, userId) {
+  const { error } = await client()
+    .from('group_members')
+    .delete()
+    .eq('group_id', groupId)
+    .eq('user_id', userId);
+  if (error) throw error;
+}
+
+// Any member can leave (RLS: self-delete allowed).
+export async function leaveGroup(groupId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+  const { error } = await client()
+    .from('group_members')
+    .delete()
+    .eq('group_id', groupId)
+    .eq('user_id', user.id);
+  if (error) throw error;
+}
+
+// Creator deletes the whole group (cascades to members + messages).
+export async function deleteGroup(groupId) {
+  const { error } = await client().from('groups').delete().eq('id', groupId);
+  if (error) throw error;
+}
+
+// Push a group message notification to every other member via the edge function
+// (fires when their app is closed — in-app uses realtime).
+export async function notifyGroupOfMessage(groupId, senderName, messageText, imageUrl = null, groupName = '') {
+  try {
+    const supabaseUrl = localStorage.getItem('pulse_supabase_url')
+      || import.meta.env.VITE_SUPABASE_URL;
+
+    const { data: { session } } = await client().auth.getSession();
+    const token = session?.access_token;
+    if (!token || !groupId) return;
+
+    await fetch(`${supabaseUrl}/functions/v1/notify-friends`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        type: 'group',
+        groupId,
+        groupName,
+        name: senderName,
+        messageText: (messageText || '').slice(0, 300),
+        imageUrl: imageUrl || null
+      })
+    });
+  } catch (err) {
+    console.warn('[Pulse] Group push notification failed:', err.message);
+  }
+}
+
+/* ==========================================
+   GROUP ROLES, RENAME, TYPING, READ RECEIPTS
+   ========================================== */
+
+// Promote/demote a member to/from admin. Creator-only (enforced server-side).
+export async function setGroupMemberRole(groupId, userId, role) {
+  const { data, error } = await client().rpc('set_group_member_role', {
+    p_group_id: groupId,
+    p_user_id: userId,
+    p_role: role
+  });
+  if (error) throw error;
+  return data;
+}
+
+// Rename the group (creator or admin can).
+export async function renameGroup(groupId, name) {
+  const trimmed = (name || '').trim();
+  if (!trimmed) throw new Error('Group name is required.');
+  if (trimmed.length > 40) throw new Error('Group name must be 40 characters or less.');
+  const { error } = await client()
+    .from('groups')
+    .update({ name: trimmed, updated_at: new Date().toISOString() })
+    .eq('id', groupId);
+  if (error) throw error;
+}
+
+// Broadcast typing status for a group (upsert / delete row).
+export async function setGroupTyping(groupId, typing) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user || !groupId) return;
+  try {
+    if (typing) {
+      await client()
+        .from('group_typing')
+        .upsert({ group_id: groupId, user_id: user.id, updated_at: new Date().toISOString() },
+          { onConflict: 'group_id,user_id' });
+    } else {
+      await client()
+        .from('group_typing')
+        .delete()
+        .eq('group_id', groupId)
+        .eq('user_id', user.id);
+    }
+  } catch (e) {
+    // Table may not exist yet on older projects — typing is best-effort
+  }
+}
+
+// Mark every message in a group as read by me (watermark on my membership row).
+export async function markGroupRead(groupId) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user || !groupId) return;
+  try {
+    await client()
+      .from('group_members')
+      .update({ last_read_at: new Date().toISOString() })
+      .eq('group_id', groupId)
+      .eq('user_id', user.id);
+  } catch (e) {
+    console.warn('[Pulse] markGroupRead failed:', e.message);
+  }
+}
+
+/* ==========================================
+   ACCOUNT DEACTIVATION + DELETION (Instagram-style)
+   ========================================== */
+
+// Reversible — hides my profile; logging back in reactivates automatically.
+export async function deactivateAccount() {
+  const { error } = await client().rpc('deactivate_my_account');
+  if (error) throw error;
+}
+
+// Called on login if the profile had deactivated_at set.
+export async function reactivateAccount() {
+  try {
+    await client().rpc('reactivate_my_account');
+  } catch { /* best-effort */ }
+}
+
+// Permanent — starts the 30-day grace period (cancellable).
+export async function requestAccountDeletion() {
+  const { error } = await client().rpc('request_account_deletion');
+  if (error) throw error;
+}
+
+export async function cancelAccountDeletion() {
+  const { error } = await client().rpc('cancel_account_deletion');
+  if (error) throw error;
 }
