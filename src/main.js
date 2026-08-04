@@ -328,6 +328,7 @@ async function checkNavigationState() {
         state.userProfile = { ...state.userProfile, deactivated_at: null };
       }
       navigateTo('dashboard');
+      invalidateCache();
       await loadDashboardData();
       setupRealtimeSync();
       startPollingFallback();
@@ -431,6 +432,7 @@ async function handleInviteLink(friendId) {
   try {
     await sendConnectionRequest(friendId);
     showToast('Connected via invite! ✨');
+    invalidateCache();
     await loadDashboardData();
     const clean = new URLSearchParams(_savedSearch);
     clean.delete('invite');
@@ -537,6 +539,7 @@ async function setupRealtimeSync() {
 
           notifyFriendStatusUpdate(displayName, emoji, text, updatedId);
           showToast(`${emoji} ${displayName} updated their status!`);
+          invalidateCache();
           await loadDashboardData();
         }
       }
@@ -1027,6 +1030,7 @@ function renderFriendsFeed() {
       try {
         await removeConnection(connId);
         showToast('Friend disconnected.');
+        invalidateCache();
         await loadDashboardData();
       } catch (err) {
         showToast(err.message, 'error');
@@ -1096,6 +1100,7 @@ function renderPendingInvites() {
       try {
         await acceptInvitation(btn.dataset.connId);
         showToast('Connected! You can now see each other\'s status.');
+        invalidateCache();
         await loadDashboardData();
       } catch (err) {
         showToast(err.message, 'error');
@@ -1108,6 +1113,7 @@ function renderPendingInvites() {
       try {
         await removeConnection(btn.dataset.connId);
         showToast('Invite removed.');
+        invalidateCache();
         await loadDashboardData();
       } catch (err) {
         showToast(err.message, 'error');
@@ -2484,6 +2490,7 @@ function startPollingFallback() {
   state.pollInterval = setInterval(async () => {
     const channelStatus = state.realtimeChannel?.state;
     if (channelStatus !== 'joined') {
+      invalidateCache(); // fallback poll must always fetch fresh data
       await loadDashboardData();
     }
   }, isIOS ? 20000 : 45000);
@@ -3367,6 +3374,9 @@ function initEventListeners() {
   };
 
   document.getElementById('btn-create-group')?.addEventListener('click', () => {
+    // Create Group now lives in the gear (Account) settings — close it first
+    const accountModal = document.getElementById('account-modal');
+    if (accountModal) accountModal.style.display = 'none';
     const friends = (state.connections || []).filter(c => c.status === 'connected');
     const nameInput = document.getElementById('group-name-input');
     if (nameInput) nameInput.value = '';
@@ -3819,6 +3829,7 @@ function initEventListeners() {
             // On error, keep the old image — never risk breaking history
           }
         }
+        invalidateCache();
         await loadDashboardData();
       }
     } catch (err) {
@@ -3904,6 +3915,7 @@ function initEventListeners() {
       await sendConnectionRequest(id);
       showToast('Connection request sent! ✉️');
       if (input) input.value = '';
+      invalidateCache();
       await loadDashboardData();
     } catch (err) {
       showToast(err.message || 'Failed to send request', 'error');
@@ -4200,6 +4212,7 @@ function initEventListeners() {
     clearReply();
     const picker = document.getElementById('chat-emoji-picker');
     if (picker) picker.style.display = 'none';
+    invalidateCache();
     navigateTo('dashboard');
     loadDashboardData();
   });

@@ -764,12 +764,33 @@ create table if not exists public.group_messages (
 alter table public.group_messages enable row level security;
 
 -- 4. RLS policies
+-- NOTE: membership checks MUST go through the security-definer helpers below.
+-- An inline `exists (select 1 from group_members ...)` inside a policy re-triggers
+-- RLS on group_members, which re-checks the same policy -> "infinite recursion
+-- detected in policy for relation group_members".
+
+create or replace function public.is_group_member(gid uuid)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.group_members gm
+    where gm.group_id = gid and gm.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.my_group_role(gid uuid)
+returns text
+language sql stable security definer
+set search_path = public
+as $$
+  select role from public.group_members where group_id = gid and user_id = auth.uid();
+$$;
 
 drop policy if exists "Members can view their groups" on public.groups;
 create policy "Members can view their groups" on public.groups
-  for select using (
-    exists (select 1 from public.group_members gm where gm.group_id = id and gm.user_id = auth.uid())
-  );
+  for select using (public.is_group_member(id));
 
 drop policy if exists "Users can create groups" on public.groups;
 create policy "Users can create groups" on public.groups
@@ -781,9 +802,7 @@ create policy "Group creators can manage their groups" on public.groups
 
 drop policy if exists "Members can view group memberships" on public.group_members;
 create policy "Members can view group memberships" on public.group_members
-  for select using (
-    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
-  );
+  for select using (public.is_group_member(group_id));
 
 drop policy if exists "Creators can add members" on public.group_members;
 create policy "Creators can add members" on public.group_members
@@ -805,15 +824,12 @@ create policy "Group creators can delete their groups" on public.groups
 
 drop policy if exists "Members can view group messages" on public.group_messages;
 create policy "Members can view group messages" on public.group_messages
-  for select using (
-    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
-  );
+  for select using (public.is_group_member(group_id));
 
 drop policy if exists "Members can send group messages" on public.group_messages;
 create policy "Members can send group messages" on public.group_messages
   for insert with check (
-    sender_id = auth.uid() and
-    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
+    sender_id = auth.uid() and public.is_group_member(group_id)
   );
 
 -- 5. Indexes (safe — no locks on other sessions)
@@ -865,7 +881,7 @@ create policy "Members can add members" on public.group_members
 drop policy if exists "Users can update their own membership" on public.group_members;
 create policy "Users can update their own membership" on public.group_members
   for update using (user_id = auth.uid())
-  with check (user_id = auth.uid() and role = (select role from public.group_members where group_id = group_id and user_id = auth.uid()));
+  with check (user_id = auth.uid() and role = public.my_group_role(group_id));
 
 -- Members can leave, admins/creator can remove
 -- (existing "Members can leave groups" policy already covers self + creator;
@@ -892,9 +908,13 @@ begin
   if p_role not in ('admin', 'member') then
     raise exception 'Role must be admin or member';
   end if;
+  -- Creator counts even if their membership row is still 'member'
+  -- (new groups insert the creator as 'member'; the row is backfilled later).
   if not exists (
     select 1 from public.group_members
     where group_id = p_group_id and user_id = auth.uid() and role = 'creator'
+  ) and not exists (
+    select 1 from public.groups g where g.id = p_group_id and g.created_by = auth.uid()
   ) then
     raise exception 'Only the group creator can change roles';
   end if;
@@ -926,9 +946,7 @@ alter table public.group_typing enable row level security;
 
 drop policy if exists "Members can view group typing" on public.group_typing;
 create policy "Members can view group typing" on public.group_typing
-  for select using (
-    exists (select 1 from public.group_members gm where gm.group_id = group_id and gm.user_id = auth.uid())
-  );
+  for select using (public.is_group_member(group_id));
 
 drop policy if exists "Members can manage their own typing" on public.group_typing;
 create policy "Members can manage their own typing" on public.group_typing
