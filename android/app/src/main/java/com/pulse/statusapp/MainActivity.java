@@ -10,6 +10,16 @@ public class MainActivity extends BridgeActivity {
         // Create the FCM channel up front so background push notifications are
         // never dropped (Android requires the channel to exist before showing).
         PulseChannels.ensure(this);
+
+        // Lock zoom on the WebView — the app scales itself proportionally to the
+        // screen, so pinch-zoom and double-tap zoom would only break the layout.
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            android.webkit.WebSettings settings = getBridge().getWebView().getSettings();
+            settings.setSupportZoom(false);
+            settings.setBuiltInZoomControls(false);
+            settings.setDisplayZoomControls(false);
+            settings.setTextZoom(100);
+        }
     }
 
     @Override
