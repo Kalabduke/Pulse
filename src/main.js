@@ -787,6 +787,7 @@ function selectEmoji(emoji) {
   document.querySelectorAll('#emoji-grid .emoji-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.emoji === emoji);
   });
+  updateStatusLivePreview();
 }
 
 function initEmojiPicker() {
@@ -1841,6 +1842,7 @@ async function handleStatusVideo(file) {
         preview.style.display = 'block';
         preview.querySelector('#status-remove-image')?.addEventListener('click', removeStatusImage);
       }
+      updateStatusLivePreview();
       showToast('Video ready ✅');
     } else {
       // Fallback: normal image-style processing
@@ -1850,6 +1852,7 @@ async function handleStatusVideo(file) {
       const img = document.getElementById('status-preview-img');
       if (img) img.src = URL.createObjectURL(compressed);
       if (preview) preview.style.display = 'block';
+      updateStatusLivePreview();
       const sizeLabel = _sizeLabel(compressed.size);
       showToast(`Video ready (${sizeLabel}) ✅`);
     }
@@ -1961,6 +1964,7 @@ async function handleStatusImage(file, fromFrontCamera = false) {
     if (preview) preview.style.display = 'block';
     // Disable emoji grid visually when photo is active
     _setEmojiPickerDisabled(true);
+    updateStatusLivePreview();
   } catch (err) {
     showToast('Failed to process image', 'error');
   }
@@ -1980,6 +1984,7 @@ function removeStatusImage() {
   if (camInput) camInput.value = '';
   // Re-enable emoji picker
   _setEmojiPickerDisabled(false);
+  updateStatusLivePreview();
 }
 
 function _setEmojiPickerDisabled(disabled) {
@@ -2002,6 +2007,40 @@ function _setEmojiPickerDisabled(disabled) {
     if (tabs) tabs.style.pointerEvents = '';
     if (customInput) customInput.disabled = false;
     if (overlay) overlay.style.display = 'none';
+  }
+}
+
+/* Live preview card — mirrors what friends will see as you compose */
+function updateStatusLivePreview() {
+  const nameEl = document.getElementById('status-live-name');
+  const textEl = document.getElementById('status-live-text');
+  const emojiEl = document.getElementById('status-live-emoji');
+  const avatarImg = document.getElementById('status-live-image');
+  if (!nameEl || !textEl) return;
+
+  const name = document.getElementById('status-name-input')?.value?.trim() || state.userProfile?.name || 'My Status';
+  const text = document.getElementById('status-text-input')?.value?.trim();
+  const emoji = document.getElementById('emoji-preview')?.textContent?.trim() || state.selectedEmoji || '😊';
+
+  nameEl.textContent = name;
+  textEl.textContent = text ? `"${text}"` : '"What\'s happening?"';
+  if (emojiEl) emojiEl.textContent = emoji;
+
+  // If a photo/video is attached, swap the avatar to show it
+  const preview = document.getElementById('status-image-preview');
+  let mediaSrc = '';
+  if (preview && preview.style.display !== 'none') {
+    const img = preview.querySelector('img');
+    const vid = preview.querySelector('video');
+    mediaSrc = (img && img.src) || (vid && (vid.src || vid.currentSrc)) || '';
+  }
+  if (avatarImg && mediaSrc) {
+    avatarImg.src = mediaSrc;
+    avatarImg.style.display = 'block';
+    if (emojiEl) emojiEl.style.display = 'none';
+  } else if (avatarImg) {
+    avatarImg.style.display = 'none';
+    if (emojiEl) emojiEl.style.display = '';
   }
 }
 
@@ -2916,6 +2955,7 @@ function initEventListeners() {
       saveBtn.innerHTML = '<span>Save & Pulse Out!</span>';
     }
 
+    updateStatusLivePreview();
     if (modal) modal.style.display = 'flex';
   });
 
@@ -3167,10 +3207,14 @@ function initEventListeners() {
       const len = statusTextInput.value.length;
       charCounter.textContent = `${len}/60`;
       charCounter.className = 'char-counter' + (len > 50 ? (len >= 60 ? ' over' : ' warn') : '');
+      updateStatusLivePreview();
     };
     statusTextInput.addEventListener('input', updateCounter);
     updateCounter();
   }
+
+  // Keep the live preview name in sync while typing
+  document.getElementById('status-name-input')?.addEventListener('input', updateStatusLivePreview);
 
   // Username live validation + availability hint lives on the username modal
   // (onboarding + rename) — see openUsernameModal().
