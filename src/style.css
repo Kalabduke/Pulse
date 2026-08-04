@@ -3,27 +3,28 @@
    ========================================== */
 
 :root {
-  /* Calm, natural palette — deep neutral navy + one coral accent.
-     Inspired by clean dark UIs: flat surfaces, white/gray hierarchy,
-     a single warm highlight. No neon, no glass, no purple glow. */
-  --primary: 356 85% 66%;
-  --primary-strong: 356 75% 51%; /* deep coral for filled surfaces with white text — clears 4.5:1 */
-  --primary-glow: 356 90% 72%;
+  /* Telegram-style dark palette — deep blue-gray surfaces + a single blue
+     accent, exactly like Telegram's night theme. Flat, calm, familiar. */
+  --primary: 212 84% 56%;          /* Telegram blue #3390ec — accents, links, ticks */
+  --primary-strong: 208 47% 32%;   /* deep blue #2b5278 — filled surfaces with white text, clears 4.5:1 */
+  --primary-glow: 212 90% 68%;
 
-  --bg-base: 226 22% 6.5%;
-  --bg-surface: 226 16% 10%;
+  --bg-base: 214 40% 9%;           /* #0e1621 — Telegram darkest panel */
+  --bg-surface: 210 30% 13%;       /* #17212b — Telegram chat surface */
+  --bg-raised: 211 26% 19%;        /* #242f3d — Telegram input field */
+  --bg-bubble-in: 211 36% 15%;     /* #182533 — Telegram received bubble */
 
-  --text-primary: 220 25% 97%;
-  --text-secondary: 226 12% 78%;
-  --text-muted: 227 10% 62%;
+  --text-primary: 210 30% 97%;
+  --text-secondary: 212 16% 68%;
+  --text-muted: 212 14% 52%;
 
-  --border-glow: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.045);
-  --radius-card: 20px;
-  --radius-lg: 16px;
-  --radius-md: 13px;
-  --shadow-glass: 0 18px 45px rgba(0, 0, 0, 0.5);
-  --transition-smooth: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --border-glow: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.04);
+  --radius-card: 16px;
+  --radius-lg: 14px;
+  --radius-md: 12px;
+  --shadow-glass: 0 18px 45px rgba(0, 0, 0, 0.55);
+  --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 *, *::before, *::after {
@@ -199,8 +200,8 @@ body {
 }
 
 .glass-card:hover {
-  background: hsl(226 15% 11.5%);
-  border-color: rgba(255, 255, 255, 0.13);
+  background: hsl(210 27% 14.5%);
+  border-color: rgba(255, 255, 255, 0.12);
   transform: translateY(-1px);
 }
 
@@ -296,8 +297,8 @@ body {
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
-  background: hsla(var(--primary) / 0.14);
-  color: hsl(356 85% 76%);
+  background: hsla(var(--primary) / 0.16);
+  color: hsl(212 90% 72%);
   padding: 3px 8px;
   border-radius: 6px;
   white-space: nowrap;
@@ -337,7 +338,7 @@ body {
 
 .btn-primary:hover {
   transform: translateY(-1px);
-  background: hsl(356 78% 57%);
+  background: hsl(212 82% 44%);
   box-shadow: 0 12px 28px hsla(var(--primary) / 0.35);
 }
 
@@ -377,7 +378,7 @@ body {
 .btn-text-link {
   background: none;
   border: none;
-  color: hsl(356 85% 76%);
+  color: hsl(212 90% 72%);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -390,7 +391,7 @@ body {
 
 .input-field {
   width: 100%;
-  background: rgba(0, 0, 0, 0.35);
+  background: hsl(var(--bg-raised));
   border: 1px solid var(--border-glow);
   border-radius: var(--radius-md);
   padding: 14px 16px;
@@ -404,7 +405,7 @@ body {
 .input-field:focus {
   border-color: hsl(var(--primary));
   background: rgba(0, 0, 0, 0.45);
-  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18), 0 0 20px rgba(242, 95, 102, 0.25);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18), 0 0 20px rgba(51, 144, 236, 0.25);
 }
 
 .input-eye-btn {
@@ -523,8 +524,8 @@ body {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: hsla(var(--primary) / 0.14);
-  color: hsl(356 85% 76%);
+  background: hsla(var(--primary) / 0.16);
+  color: hsl(212 90% 72%);
   font-weight: 700;
   font-size: 12px;
   display: flex;
@@ -537,11 +538,11 @@ body {
   padding: 2px 6px;
   border-radius: 6px;
   font-family: monospace;
-  color: hsl(356 85% 76%);
+  color: hsl(212 90% 72%);
 }
 
 .link {
-  color: hsl(356 85% 76%);
+  color: hsl(212 90% 72%);
   text-decoration: underline;
 }
 
@@ -635,7 +636,7 @@ body {
 }
 
 .modal-content {
-  background: hsl(226 16% 11%);
+  background: hsl(var(--bg-surface));
   border: 1px solid var(--border-glow);
   border-radius: 20px;
   padding: 18px 16px;
@@ -673,7 +674,7 @@ body {
 }
 
 .custom-modal-box {
-  background: hsl(226 16% 11%);
+  background: hsl(var(--bg-surface));
   border: 1px solid var(--border-glow);
   border-radius: 24px;
   padding: 28px 24px;
@@ -716,7 +717,7 @@ body {
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%) translateY(100px);
-  background: hsl(226 15% 11%);
+  background: hsl(var(--bg-surface));
   border: 1px solid var(--border-glow);
   padding: 12px 24px;
   border-radius: 30px;
@@ -741,7 +742,7 @@ body {
 /* Toast variants — subtle colored borders for quick recognition */
 .toast-success { border-color: rgba(34, 197, 94, 0.5); }
 .toast-error   { border-color: rgba(239, 68, 68, 0.6); }
-.toast-info    { border-color: rgba(242, 95, 102, 0.55); }
+.toast-info    { border-color: rgba(51, 144, 236, 0.55); }
 
 /* ==========================================
    ONLINE / OFFLINE INDICATOR
@@ -899,11 +900,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border-glow);
-  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%), hsl(var(--bg-surface));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: hsl(var(--bg-surface));
   position: sticky;
   top: 0;
   z-index: 10;
@@ -932,6 +931,7 @@ body {
   flex-direction: column;
   gap: 12px;
   padding-bottom: 100px;
+  background: hsl(var(--bg-surface));
 }
 
 .chat-bubble {
@@ -998,7 +998,7 @@ body {
 }
 
 .chat-bubble.received {
-  background: hsl(226 14% 12.5%);
+  background: hsl(var(--bg-bubble-in));
   border: 1px solid var(--border-glow);
   color: hsl(var(--text-primary));
   border-bottom-left-radius: 4px;
@@ -1150,7 +1150,7 @@ body {
   gap: 2px;
   max-width: 210px;
   padding: 8px;
-  background: hsl(226 15% 12%);
+  background: hsl(var(--bg-raised));
   border: 1px solid var(--border-glow);
   border-radius: 14px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
@@ -1176,7 +1176,7 @@ body {
   gap: 2px;
   min-width: 132px;
   padding: 6px;
-  background: hsl(226 15% 12%);
+  background: hsl(var(--bg-raised));
   border: 1px solid var(--border-glow);
   border-radius: 14px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
@@ -1294,8 +1294,8 @@ body {
 
 .chat-text-input {
   flex: 1;
-  background: rgba(0,0,0,0.3);
-  border: 1px solid var(--border-glow);
+  background: hsl(var(--bg-raised));
+  border: 1px solid transparent;
   border-radius: 20px;
   padding: 10px 16px;
   color: white;
@@ -1311,7 +1311,7 @@ body {
 }
 
 .chat-text-input:focus {
-  border-color: hsl(var(--primary));
+  border-color: hsla(var(--primary) / 0.7);
 }
 
 /* Placeholders must be visible on the dark theme */
@@ -1360,7 +1360,7 @@ body {
 
 .chat-send-btn:hover {
   transform: scale(1.06);
-  background: hsl(356 88% 71%);
+  background: hsl(212 82% 46%);
   box-shadow: 0 6px 18px hsla(var(--primary) / 0.4);
 }
 
@@ -1663,7 +1663,7 @@ body {
 .history-name {
   font-size: 13px;
   font-weight: 700;
-  color: hsl(356 85% 76%);
+  color: hsl(212 90% 72%);
 }
 
 .history-text {
@@ -1756,7 +1756,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: rgba(242, 95, 102, 0.1);
+  background: rgba(51, 144, 236, 0.12);
   border-left: 3px solid hsl(var(--primary));
   border-radius: 8px;
   margin-bottom: 6px;
@@ -1943,7 +1943,7 @@ body {
 /* Flash highlight when jumping to a searched message */
 @keyframes chatJumpFlash {
   0%, 100% { background: transparent; }
-  50% { background: rgba(242, 95, 102, 0.25); }
+  50% { background: rgba(51, 144, 236, 0.22); }
 }
 
 .chat-row.chat-jump-flash {
@@ -1956,7 +1956,7 @@ body {
   bottom: 100%;
   left: 0;
   right: 0;
-  background: hsl(226 15% 12%);
+  background: hsl(var(--bg-raised));
   border: 1px solid var(--border-glow);
   border-radius: 16px 16px 0 0;
   padding: 10px;
@@ -2082,7 +2082,7 @@ body {
 }
 
 .video-progress-box {
-  background: hsl(226 15% 12%);
+  background: hsl(var(--bg-raised));
   border: 1px solid var(--border-glow);
   border-radius: 20px;
   padding: 28px 32px;
@@ -2188,8 +2188,8 @@ body {
   gap: 6px;
   margin-top: 6px;
   padding: 6px 10px;
-  background: rgba(242, 95, 102, 0.08);
-  border: 1px solid rgba(242, 95, 102, 0.2);
+  background: rgba(51, 144, 236, 0.1);
+  border: 1px solid rgba(51, 144, 236, 0.2);
   border-radius: 10px;
   font-size: 11px;
   color: hsl(var(--text-muted));
@@ -2197,7 +2197,7 @@ body {
 }
 
 .private-sent-preview span:first-child {
-  color: #ff9aa0;
+  color: hsl(212 90% 72%);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -2208,7 +2208,7 @@ body {
   border-radius: 6px;
   object-fit: cover;
   cursor: zoom-in;
-  border: 1px solid rgba(242, 95, 102, 0.3);
+  border: 1px solid rgba(51, 144, 236, 0.3);
 }
 .direct-status-badge {
   display: inline-flex;
@@ -2216,11 +2216,11 @@ body {
   gap: 4px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(242, 95, 102, 0.2);
-  color: #ff9aa0;
+  background: rgba(51, 144, 236, 0.18);
+  color: hsl(212 90% 72%);
   padding: 3px 8px;
   border-radius: 8px;
-  border: 1px solid rgba(242, 95, 102, 0.3);
+  border: 1px solid rgba(51, 144, 236, 0.3);
   margin-top: 4px;
   width: fit-content;
 }

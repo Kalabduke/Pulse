@@ -1,13 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
   <defs>
     <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
-      <stop offset="0%" stop-color="#F25F66" stop-opacity="0.22"/>
-      <stop offset="100%" stop-color="#0c0c0f" stop-opacity="0"/>
+      <stop offset="0%" stop-color="#3390ec" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#17212b" stop-opacity="0"/>
     </radialGradient>
     <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffb0b5"/>
-      <stop offset="50%" stop-color="#F25F66"/>
-      <stop offset="100%" stop-color="#c94a52"/>
+      <stop offset="0%" stop-color="#8ec7ff"/>
+      <stop offset="50%" stop-color="#3390ec"/>
+      <stop offset="100%" stop-color="#1f5e99"/>
     </linearGradient>
     <filter id="glow">
       <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
@@ -19,7 +19,7 @@
   </defs>
 
   <!-- Background circle -->
-  <circle cx="50" cy="50" r="48" fill="url(#bgGrad)" stroke="rgba(242,95,102,0.3)" stroke-width="1"/>
+  <circle cx="50" cy="50" r="48" fill="url(#bgGrad)" stroke="rgba(51,144,236,0.3)" stroke-width="1"/>
 
   <!-- Pulse waveform bars (heart-rate style) -->
   <g filter="url(#glow)" stroke="url(#iconGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
@@ -28,6 +28,6 @@
   </g>
 
   <!-- Center pulse dot -->
-  <circle cx="50" cy="50" r="4" fill="#F25F66" filter="url(#glow)"/>
-  <circle cx="50" cy="50" r="2" fill="#ffb0b5"/>
+  <circle cx="50" cy="50" r="4" fill="#3390ec" filter="url(#glow)"/>
+  <circle cx="50" cy="50" r="2" fill="#8ec7ff"/>
 </svg>

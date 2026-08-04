@@ -8,7 +8,7 @@
   <meta name="description" content="Real-time emotional & health status updates on your lock screen & notifications with close friends.">
   <link rel="icon" type="image/png" href="/icon-192.png">
   <link rel="manifest" href="/manifest.json">
-  <meta name="theme-color" content="#0c0c0f">
+  <meta name="theme-color" content="#17212b">
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -176,7 +176,7 @@
         <div class="glass-card accent-card">
           <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 10px;">
             <div style="display: flex; align-items: center; gap: 12px; min-width:0; flex:1;">
-              <div class="avatar-container" id="my-avatar-container" style="background: rgba(242, 95, 102, 0.1); border-color: rgba(242, 95, 102, 0.3);">
+              <div class="avatar-container" id="my-avatar-container" style="background: rgba(51, 144, 236, 0.12); border-color: rgba(51, 144, 236, 0.3);">
                 <span id="my-avatar">👋</span>
                 <span id="my-pulse-dot" class="online-pulse-dot"></span>
               </div>
@@ -189,14 +189,14 @@
                 <img id="my-status-image" style="display:none;" alt="">
               </div>
             </div>
-            <button id="btn-open-status-modal" class="btn btn-secondary btn-small" style="background: rgba(242, 95, 102, 0.15); border-color: rgba(242, 95, 102, 0.3); font-weight: 700; color: #ff9aa0; flex-shrink:0;">
+            <button id="btn-open-status-modal" class="btn btn-secondary btn-small" style="background: rgba(51, 144, 236, 0.15); border-color: rgba(51, 144, 236, 0.3); font-weight: 700; color: hsl(212 90% 72%); flex-shrink:0;">
               <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
               Update
             </button>
           </div>
           <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
             <span style="font-size: 11px; color: hsl(var(--text-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex:1;">
-              ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: #ff9aa0;">Loading...</strong>
+              ID: <strong id="my-id-display" style="user-select: all; cursor: pointer; color: hsl(212 90% 72%);">Loading...</strong>
             </span>
             <div style="display:flex;gap:6px;flex-shrink:0;">
               <button id="btn-share-id" class="btn btn-secondary btn-small" style="padding: 4px 10px; font-size: 11px;" title="Share invite link"><svg class="icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" x2="12" y1="2" y2="15"/></svg> Share</button>
