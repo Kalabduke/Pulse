@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 // Cron-scheduled (or manual) job: permanently deletes accounts whose
 // 30-day grace period (deletion_requested_at) has elapsed. Deleting the
-// auth user cascades to profiles, connections, messages, groups, etc.
+// auth user cascades to profiles, connections, messages, etc.
 //
 // Schedule (Supabase dashboard → Edge Functions → cleanup-deleted-accounts → cron):
 //   */30 * * * *   (every 30 min) or daily  0 3 * * *

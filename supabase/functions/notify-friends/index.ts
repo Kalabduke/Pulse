@@ -96,50 +96,11 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     const body = await req.json();
-    const { type = 'status', userId, emoji, statusText, name, recipientId, messageText, imageUrl, groupId, groupName } = body;
+    const { type = 'status', userId, emoji, statusText, name, recipientId, messageText, imageUrl } = body;
 
     let friendIds: string[] = [];
-    let resolvedGroupName = '';
 
-    if (type === 'group') {
-      // ---- Group push: caller is the SENDER, everyone else in the group gets it ----
-      if (!groupId) {
-        return new Response(JSON.stringify({ error: 'groupId required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Verify the caller is actually a member (anti-spam)
-      const { data: memberCheck } = await supabase
-        .from('group_members')
-        .select('user_id')
-        .eq('group_id', groupId)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (!memberCheck) {
-        return new Response(JSON.stringify({ error: 'Caller is not a group member' }), {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Resolve the group name server-side (don't trust the body)
-      const { data: group } = await supabase
-        .from('groups')
-        .select('name')
-        .eq('id', groupId)
-        .maybeSingle();
-      resolvedGroupName = group?.name || groupName || 'Group';
-
-      const { data: members } = await supabase
-        .from('group_members')
-        .select('user_id')
-        .eq('group_id', groupId);
-      friendIds = (members ?? [])
-        .map((m: any) => m.user_id)
-        .filter((id: string) => id !== user.id);
-    } else if (type === 'message') {
+    if (type === 'message') {
       // ---- DM push: caller is the SENDER, recipientId is who gets notified ----
       if (!recipientId || recipientId === user.id) {
         return new Response(JSON.stringify({ error: 'recipientId required and must differ from the caller' }), {
@@ -193,7 +154,6 @@ Deno.serve(async (req) => {
     // Shared notification content — differs by type.
     // Fetch the sender's identity from profiles server-side instead of trusting
     // the request body, so a connected friend can't spoof the notification title.
-    const isGroup = type === 'group';
     const isMessage = type === 'message';
     const { data: senderProfile } = await supabase
       .from('profiles')
@@ -202,18 +162,13 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const senderName = senderProfile?.name || name || 'A friend';
-    const senderEmoji = senderProfile?.status_emoji || emoji || (isMessage ? '💬' : isGroup ? '👥' : '💫');
+    const senderEmoji = senderProfile?.status_emoji || emoji || (isMessage ? '💬' : '💫');
 
-    // Telegram-style: title = group name, body = "Sender: message"
-    const notifTitle = isGroup
-      ? `${senderEmoji} ${resolvedGroupName}`
-      : `${senderEmoji} ${senderName}`;
-    const notifBody = isGroup
-      ? `${senderName}: ${messageText || (imageUrl ? '📎 Photo' : 'sent a message')}`
-      : isMessage
-        ? (messageText || (imageUrl ? '📎 Photo' : 'Sent you a message'))
-        : `"${statusText || 'Updated their status'}"`;
-    const notifUrl = isGroup ? `/?group=${groupId}` : isMessage ? `/?chat=${user.id}` : '/';
+    const notifTitle = `${senderEmoji} ${senderName}`;
+    const notifBody = isMessage
+      ? (messageText || (imageUrl ? '📎 Photo' : 'Sent you a message'))
+      : `"${statusText || 'Updated their status'}"`;
+    const notifUrl = isMessage ? `/?chat=${user.id}` : '/';
 
     // ---- 3. Android FCM push (native app) ----
     const serviceAccountStr = Deno.env.get('FIREBASE_SERVICE_ACCOUNT') ?? '';
@@ -243,10 +198,8 @@ Deno.serve(async (req) => {
                   body: notifBody
                 },
                 data: {
-                  type: isGroup ? 'group' : isMessage ? 'message' : 'status',
+                  type: isMessage ? 'message' : 'status',
                   friendName: senderName,
-                  groupName: resolvedGroupName || '',
-                  groupId: groupId || '',
                   emoji: senderEmoji,
                   statusText: statusText || '',
                   messageText: messageText || '',
@@ -310,10 +263,8 @@ Deno.serve(async (req) => {
         .in('user_id', friendIds);
 
       const payload = JSON.stringify({
-        type: isGroup ? 'group' : isMessage ? 'message' : 'status',
+        type: isMessage ? 'message' : 'status',
         friendName: senderName,
-        groupName: resolvedGroupName || '',
-        groupId: groupId || '',
         emoji: senderEmoji,
         statusText: statusText || '',
         messageText: (messageText || '').slice(0, 300),
