@@ -41,16 +41,21 @@ alter table public.connections enable row level security;
 
 -- 3. Automatic Profile Creation Trigger on Sign Up
 -- When a user registers via email/OTP, Supabase creates a record in auth.users.
--- This function automatically creates a corresponding record in public.profiles.
+-- This function automatically creates a corresponding record in public.profiles
+-- and assigns a Telegram-style username (unique, lowercase, 5-32 chars).
 create or replace function public.handle_new_user()
 returns trigger as $$
+declare
+  uname text;
 begin
-  insert into public.profiles (id, name, status_emoji, status_text)
+  uname := public.next_username(coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)));
+  insert into public.profiles (id, name, status_emoji, status_text, username)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
     '👋',
-    'Just joined Pulse!'
+    'Just joined Pulse!',
+    uname
   )
   on conflict (id) do nothing;
   return new;
@@ -564,3 +569,127 @@ do $$ begin
     alter publication supabase_realtime add table public.location_shares;
   exception when others then end;
 end; $$;
+
+-- ====================================================================
+-- USERNAMES (Telegram-style public handles)
+-- Each user gets a unique, case-insensitive username like @kalid.
+-- Rules (same as Telegram): 5-32 chars, lowercase a-z, 0-9, underscores.
+-- ====================================================================
+
+-- 1. Add username column
+create table if not exists public.profiles (
+  id uuid references auth.users on delete cascade primary key,
+  name text,
+  status_emoji text default '😊',
+  status_text text default 'Available',
+  status_image_url text default null,
+  last_seen timestamp with time zone default timezone('utc'::text, now()),
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+alter table public.profiles add column if not exists username text;
+alter table public.profiles add column if not exists username_chosen boolean default false;
+-- User tapped "Skip for now" on onboarding — don't nag them on every launch.
+alter table public.profiles add column if not exists skip_username boolean default false;
+
+-- 2. Case-insensitive uniqueness — no two users can share a username
+create unique index if not exists profiles_username_lower_idx on public.profiles (lower(username));
+
+-- 3. Helper: derive a unique username from a display name (used by trigger + backfill)
+create or replace function public.next_username(name_input text)
+returns text
+language plpgsql
+set search_path = public
+as $$
+declare
+  base text;
+  candidate text;
+  i int;
+begin
+  base := lower(regexp_replace(coalesce(name_input, 'user'), '[^a-z0-9_]+', '', 'g'));
+  if base is null or base = '' then base := 'user'; end if;
+  if length(base) < 5 then base := base || repeat('x', 5 - length(base)); end if;
+  base := left(base, 32);
+  candidate := base;
+  i := 0;
+  while exists (select 1 from public.profiles where lower(username) = lower(candidate)) loop
+    i := i + 1;
+    candidate := left(base, 32 - length(i::text)) || i::text;
+  end loop;
+  return candidate;
+end;
+$$;
+
+-- 4. RPC: validate + claim a username atomically (enforces uniqueness server-side).
+--    Sets username_chosen = true so the app knows the user picked their own handle.
+create or replace function public.set_my_username(new_username text)
+returns text
+language plpgsql security definer
+set search_path = public
+as $$
+declare
+  clean text;
+begin
+  clean := lower(btrim(regexp_replace(new_username, '^@+', '')));
+  if clean is null or clean = '' then
+    raise exception 'Username cannot be empty';
+  end if;
+  if clean !~ '^[a-z0-9_]{5,32}$' then
+    raise exception 'Username must be 5-32 characters using only letters, numbers, and underscores';
+  end if;
+  if exists (select 1 from public.profiles where lower(username) = clean and id <> auth.uid()) then
+    raise exception 'That username is already taken';
+  end if;
+  update public.profiles set username = clean, username_chosen = true, updated_at = now() where id = auth.uid();
+  return clean;
+end;
+$$;
+
+-- 5. Fast availability check — O(1) indexed lookup via the lower(username) unique index.
+create or replace function public.username_taken(candidate text)
+returns boolean
+language sql stable security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles
+    where lower(username) = lower(btrim(regexp_replace(candidate, '^@+', '')))
+  );
+$$;
+
+-- 6. Fast profile lookup by username — indexed, single row.
+create or replace function public.find_by_username(candidate text)
+returns table (id uuid, name text, username text)
+language sql stable security definer
+set search_path = public
+as $$
+  select p.id, p.name, p.username
+  from public.profiles p
+  where lower(p.username) = lower(btrim(regexp_replace(candidate, '^@+', '')))
+  limit 1;
+$$;
+
+-- 7. Backfill: existing users get a username derived from their display name.
+--    Collisions get a numeric suffix (kalid → kalid, kalid → kalid2, ...).
+--    Marked username_chosen = true so established users aren't nagged by onboarding.
+do $$
+declare
+  r record;
+begin
+  for r in select id, name from public.profiles where username is null or username = '' loop
+    update public.profiles
+    set username = public.next_username(r.name),
+        username_chosen = true
+    where id = r.id;
+  end loop;
+end $$;
+
+-- 8. Also mark users who ALREADY have a username (from the earlier migration)
+--    as chosen — only brand-new signups should be prompted by onboarding.
+--    NOTE: re-running this whole script later would re-mark new signups as
+--    chosen; that's acceptable since onboarding only matters on first login.
+update public.profiles set username_chosen = true
+where username is not null and username <> '' and username_chosen is not true;
+
+-- 9. Users who already have a username never need onboarding, and anyone
+--    who skipped it shouldn't be re-nagged on every reload.
+update public.profiles set skip_username = false where username is not null and username <> '';

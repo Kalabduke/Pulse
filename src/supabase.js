@@ -220,10 +220,103 @@ export async function getSessionAndProfile(savedHash = '', savedSearch = '') {
         updated_at: new Date().toISOString()
       };
     }
-    return { ...newProfile, email: user.email };
+    return { ...(await ensureUsername(newProfile)), email: user.email };
   }
 
-  return { ...profile, email: user.email };
+  return { ...(await ensureUsername(profile)), email: user.email };
+}
+
+/* ==========================================
+   USERNAMES (Telegram-style handles)
+   ========================================== */
+
+// Derive a valid username from a display name (lowercase a-z, 0-9, _; 5-32 chars)
+function deriveUsername(name) {
+  let base = (name || 'user').toLowerCase().replace(/[^a-z0-9_]+/g, '');
+  if (!base) base = 'user';
+  while (base.length < 5) base += 'x';
+  return base.slice(0, 32);
+}
+
+// Claim/change my username. Uniqueness is enforced server-side by the
+// set_my_username RPC (case-insensitive unique index on lower(username)).
+export async function setMyUsername(newUsername) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+  const { data, error } = await client().rpc('set_my_username', { new_username: newUsername });
+  if (error) throw new Error(error.message || 'Could not update username.');
+  return data;
+}
+
+// User tapped "Skip for now" on the username onboarding modal — persist it so
+// the modal doesn't reappear on every app launch.
+export async function markUsernameSkipped() {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+  const { error } = await client()
+    .from('profiles')
+    .update({ skip_username: true, updated_at: new Date().toISOString() })
+    .eq('id', user.id);
+  if (error) throw new Error(error.message || 'Could not save preference.');
+}
+
+// Best-effort: make sure my profile has a username (auto-claim from display
+// name if the backfill hasn't run yet). Mirrors the SQL next_username() by
+// retrying with a numeric suffix when the base name is taken. Never blocks.
+export async function ensureUsername(profile) {
+  if (!profile) return profile;
+  if (profile.username) return profile;
+  const base = deriveUsername(profile.name || 'user');
+  try {
+    const username = await setMyUsername(base);
+    return { ...profile, username };
+  } catch {
+    // Base name taken — try kalab → kalab2 → kalab3 …
+    for (let i = 2; i < 100; i++) {
+      try {
+        const candidate = `${base.slice(0, 30)}${i}`.slice(0, 32);
+        const username = await setMyUsername(candidate);
+        return { ...profile, username };
+      } catch { /* keep trying next suffix */ }
+    }
+    return profile;
+  }
+}
+
+// Fast availability check — uses the username_taken RPC backed by the
+// lower(username) unique index (O(1) indexed lookup, no table scan). Falls
+// back to an ilike query only if the RPC doesn't exist yet.
+export async function isUsernameTaken(username) {
+  const clean = (username || '').trim().replace(/^@/, '').toLowerCase();
+  if (!clean) return false;
+  try {
+    const { data, error } = await client().rpc('username_taken', { candidate: clean });
+    if (!error && typeof data === 'boolean') return data;
+  } catch { /* RPC missing — fall through */ }
+  const { data: rows } = await client()
+    .from('profiles')
+    .select('id')
+    .ilike('username', clean)
+    .limit(1);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+// Fast exact-username profile lookup — indexed RPC, single row. Falls back to
+// a direct query if the RPC isn't deployed yet.
+export async function findByUsername(candidate) {
+  const clean = (candidate || '').trim().replace(/^@/, '');
+  if (!clean) return null;
+  try {
+    const { data, error } = await client().rpc('find_by_username', { candidate: clean });
+    if (!error && data && data.length > 0) return data[0];
+    if (!error) return null;
+  } catch { /* RPC missing — fall through */ }
+  const { data } = await client()
+    .from('profiles')
+    .select('id, name, username')
+    .ilike('username', clean)
+    .limit(1);
+  return data && data.length > 0 ? data[0] : null;
 }
 
 /* ==========================================
@@ -362,8 +455,8 @@ export async function fetchConnections() {
       created_at,
       user_id,
       friend_id,
-      sender:profiles!connections_user_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen),
-      receiver:profiles!connections_friend_id_fkey(id, name, status_emoji, status_text, status_image_url, updated_at, last_seen)
+      sender:profiles!connections_user_id_fkey(id, name, username, status_emoji, status_text, status_image_url, updated_at, last_seen),
+      receiver:profiles!connections_friend_id_fkey(id, name, username, status_emoji, status_text, status_image_url, updated_at, last_seen)
     `)
     .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
 
@@ -385,7 +478,7 @@ export async function fetchConnections() {
     if (profileIds.length > 0) {
       const { data: profs } = await client()
         .from('profiles')
-        .select('id, name, status_emoji, status_text, status_image_url, updated_at, last_seen')
+        .select('id, name, username, status_emoji, status_text, status_image_url, updated_at, last_seen')
         .in('id', profileIds);
 
       if (profs) {
@@ -453,6 +546,7 @@ export async function fetchConnections() {
       friendId,
       name: friendName,
       displayName: myNickname?.trim() || friendName,
+      username: friend?.username || null,
       createdAt: conn.created_at,
       statusEmoji: friend?.status_emoji || '😊',
       statusText: friend?.status_text || 'Available',
@@ -486,8 +580,8 @@ export async function sendConnectionRequest(friendIdOrName) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');
 
-  const query = friendIdOrName.trim();
-  if (!query) throw new Error('Please enter a Pulse ID or display name.');
+  const query = friendIdOrName.trim().replace(/^@/, '');
+  if (!query) throw new Error('Please enter a @username or display name.');
   if (query.toLowerCase() === user.id.toLowerCase()) {
     throw new Error("You can't connect with yourself!");
   }
@@ -501,24 +595,33 @@ export async function sendConnectionRequest(friendIdOrName) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let friendProfile = null;
 
+  // 1) Exact UUID (legacy Pulse IDs still work)
   if (uuidRegex.test(query)) {
     const { data } = await client()
       .from('profiles')
-      .select('id, name')
+      .select('id, name, username')
       .eq('id', query)
       .limit(1);
     if (data && data.length > 0) friendProfile = data[0];
-  } else {
+  }
+
+  // 2) Exact username (case-insensitive) — Telegram-style @handle, indexed RPC
+  if (!friendProfile && /^[a-z0-9_]{5,32}$/i.test(query)) {
+    friendProfile = await findByUsername(query);
+  }
+
+  // 3) Fallback: display-name search
+  if (!friendProfile) {
     const { data } = await client()
       .from('profiles')
-      .select('id, name')
+      .select('id, name, username')
       .ilike('name', `%${query}%`)
       .limit(1);
     if (data && data.length > 0) friendProfile = data[0];
   }
 
   if (!friendProfile) {
-    throw new Error("Friend not found. Check their Pulse ID or display name.");
+    throw new Error("Friend not found. Check their @username or display name.");
   }
   if (friendProfile.id === user.id) {
     throw new Error("You can't connect with yourself!");

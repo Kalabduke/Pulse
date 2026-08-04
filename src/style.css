@@ -2059,6 +2059,10 @@ body {
   margin-top: 4px;
 }
 
+.char-counter.success {
+  color: #4ade80;
+}
+
 .char-counter.warn {
   color: #fbbf24;
 }

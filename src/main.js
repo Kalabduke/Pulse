@@ -42,6 +42,8 @@ import {
   setTypingStatus,
   deleteStatusImage,
   notifyFriendOfMessage,
+  setMyUsername,
+  isUsernameTaken,
   client
 } from './supabase.js';
 
@@ -295,6 +297,8 @@ async function checkNavigationState() {
       startHeartbeat();
       resumeLocationSharing();
       handleDeepLinks();
+      // New users pick their @username once they're in
+      setTimeout(maybeShowUsernameOnboarding, 1200);
     } else {
       navigateTo('auth');
       setAuthMode('signin');
@@ -352,8 +356,12 @@ async function handleInviteLink(friendId) {
   const myId = state.userProfile?.id;
   if (!friendId || !myId) return;
 
-  // Already connected?
-  const existing = state.connections.find(c => c.friendId === friendId);
+  // Already connected? The invite param can be a uuid (legacy) or a @username.
+  const handle = String(friendId).replace(/^@/, '').toLowerCase();
+  const existing = state.connections.find(c =>
+    c.friendId === friendId ||
+    (c.username && c.username.toLowerCase() === handle)
+  );
   if (existing) {
     showToast(existing.status === 'connected'
       ? 'Already connected with this friend! ✅'
@@ -712,8 +720,9 @@ function updateMyStatusUI() {
   if (myStatusImage) myStatusImage.style.display = 'none';
 
   if (idDisplay) {
-    idDisplay.textContent = state.userProfile.id;
-    idDisplay.title = 'Click to copy your Pulse ID';
+    const uname = state.userProfile.username;
+    idDisplay.textContent = uname ? `@${uname}` : 'Set username';
+    idDisplay.title = uname ? 'Click to copy your username' : 'Set your username in Update Status';
   }
   if (myDot) {
     myDot.className = 'online-pulse-dot';
@@ -816,7 +825,7 @@ function renderFriendsFeed() {
     container.innerHTML = `
       <div class="glass-card empty-state-card">
         <span class="empty-icon">👥</span>
-        No connected friends yet. Share your Pulse ID below to start syncing lockscreens in real-time!
+        No connected friends yet. Share your @username below to start syncing lockscreens in real-time!
       </div>
     `;
     return;
@@ -2563,6 +2572,75 @@ function notifyFriendStatusUpdate(friendName, emoji, statusText, userId = '') {
 /* ==========================================
    EVENT LISTENERS
    ========================================== */
+/* ==========================================
+   USERNAME ONBOARDING + SHARED VALIDATION
+   ========================================== */
+
+// Live username validation + availability hint — shared by the status modal
+// and the onboarding modal. Uses the fast username_taken RPC.
+function attachUsernameLiveHint(usernameInput, usernameHint) {
+  if (!usernameInput || !usernameHint) return;
+  let unameTimer = null;
+  const updateUsernameHint = async () => {
+    const raw = usernameInput.value.trim().replace(/^@/, '').toLowerCase();
+    if (!raw) {
+      usernameHint.textContent = '5-32 chars · letters, numbers, underscores · unique';
+      usernameHint.className = 'char-counter';
+      return;
+    }
+    if (!/^[a-z0-9_]{5,32}$/.test(raw)) {
+      usernameHint.textContent = '5-32 chars · lowercase letters, numbers, underscores only';
+      usernameHint.className = 'char-counter warn';
+      return;
+    }
+    if (raw === state.userProfile?.username) {
+      usernameHint.textContent = '✓ Your current username';
+      usernameHint.className = 'char-counter success';
+      return;
+    }
+    usernameHint.textContent = 'Checking availability…';
+    usernameHint.className = 'char-counter';
+    try {
+      const taken = await isUsernameTaken(raw);
+      if (taken) {
+        usernameHint.textContent = '✕ Username already taken';
+        usernameHint.className = 'char-counter over';
+      } else {
+        usernameHint.textContent = '✓ Available';
+        usernameHint.className = 'char-counter success';
+      }
+    } catch {
+      usernameHint.textContent = 'Could not check — will validate on save';
+      usernameHint.className = 'char-counter';
+    }
+  };
+  usernameInput.addEventListener('input', () => {
+    clearTimeout(unameTimer);
+    unameTimer = setTimeout(updateUsernameHint, 350);
+  });
+}
+
+// After login, prompt new users to pick their @username until they do.
+// Skips when the user already chose a handle (username_chosen), tapped Skip
+// before (skip_username), or was backfilled as an established user.
+let _usernameOnboarded = false;
+function maybeShowUsernameOnboarding() {
+  if (_usernameOnboarded) return;
+  if (!state.userProfile) return;
+  if (state.userProfile.username_chosen || state.userProfile.skip_username) return;
+  const modal = document.getElementById('username-onboarding-modal');
+  const input = document.getElementById('username-onboarding-input');
+  const hint = document.getElementById('username-onboarding-hint');
+  if (!modal || !input || !hint) return;
+  _usernameOnboarded = true;
+  // Prefill the auto-generated username so they can edit rather than retype
+  input.value = state.userProfile.username || '';
+  hint.textContent = 'Pick a unique username — this is how friends find you.';
+  hint.className = 'char-counter';
+  attachUsernameLiveHint(input, hint);
+  modal.style.display = 'flex';
+}
+
 function initEventListeners() {
 
   // Tap a DM notification toast → open that chat
@@ -2747,7 +2825,15 @@ function initEventListeners() {
     const modal = document.getElementById('status-modal');
     const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
+    const usernameInput = document.getElementById('status-username-input');
+    const usernameHint = document.getElementById('status-username-hint');
     if (nameInput) nameInput.value = state.userProfile?.name || '';
+    // Pre-fill current username so user can edit rather than retype
+    if (usernameInput) usernameInput.value = state.userProfile?.username || '';
+    if (usernameHint) {
+      usernameHint.textContent = '5-32 chars · letters, numbers, underscores · unique';
+      usernameHint.className = 'char-counter';
+    }
     // Pre-fill current status text so user can edit rather than retype
     if (textInput) {
       textInput.value = state.userProfile?.status_text || '';
@@ -2792,6 +2878,45 @@ function initEventListeners() {
     document.getElementById('status-modal').style.display = 'none';
   });
 
+  // Username onboarding modal — save / skip
+  document.getElementById('username-onboarding-save')?.addEventListener('click', async () => {
+    const modal = document.getElementById('username-onboarding-modal');
+    const input = document.getElementById('username-onboarding-input');
+    const hint = document.getElementById('username-onboarding-hint');
+    if (!modal || !input || !hint) return;
+
+    const raw = input.value.trim().replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9_]{5,32}$/.test(raw)) {
+      hint.textContent = 'Username must be 5-32 chars: letters, numbers, underscores only';
+      hint.className = 'char-counter over';
+      return;
+    }
+    try {
+      // Always claim via the RPC — it's idempotent, atomically enforces
+      // uniqueness, and persists username_chosen so the modal never re-appears.
+      await setMyUsername(raw);
+      state.userProfile = { ...state.userProfile, username: raw, username_chosen: true, skip_username: false };
+      updateMyStatusUI();
+      modal.style.display = 'none';
+      showToast(`Welcome, @${raw}! ✨`);
+    } catch (err) {
+      hint.textContent = err.message?.toLowerCase().includes('taken')
+        ? '✕ Username already taken'
+        : (err.message || 'Could not set username.');
+      hint.className = 'char-counter over';
+    }
+  });
+
+  document.getElementById('username-onboarding-skip')?.addEventListener('click', async () => {
+    // Persist the skip so the modal doesn't reappear on every launch
+    const modal = document.getElementById('username-onboarding-modal');
+    modal.style.display = 'none';
+    try {
+      await markUsernameSkipped();
+      if (state.userProfile) state.userProfile = { ...state.userProfile, skip_username: true };
+    } catch { /* best-effort — worst case the modal shows once more later */ }
+  });
+
   document.getElementById('btn-save-status')?.addEventListener('click', async () => {
     if (!state.userProfile) return;
 
@@ -2803,8 +2928,30 @@ function initEventListeners() {
 
     const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
+    const usernameInput = document.getElementById('status-username-input');
     const name = nameInput?.value.trim() || state.userProfile.name;
     const text = textInput?.value.trim() || '';
+    const newUsername = (usernameInput?.value || '').trim().replace(/^@/, '').toLowerCase();
+
+    // If the user typed a username, validate + claim it (unique, 5-32 chars)
+    if (newUsername && newUsername !== state.userProfile.username) {
+      if (!/^[a-z0-9_]{5,32}$/.test(newUsername)) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = origText;
+        showToast('Username must be 5-32 chars: letters, numbers, underscores only.', 'error');
+        return;
+      }
+      try {
+        await setMyUsername(newUsername);
+        state.userProfile = { ...state.userProfile, username: newUsername, username_chosen: true };
+        updateMyStatusUI();
+      } catch (err) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = origText;
+        showToast(err.message || 'That username is taken — try another.', 'error');
+        return;
+      }
+    }
 
     // Check recipient mode
     const recipientRadio = document.querySelector('input[name="recipient"]:checked');
@@ -2933,6 +3080,14 @@ function initEventListeners() {
     updateCounter();
   }
 
+  // Live username validation + availability hint — shared by the status modal
+  // and the onboarding modal (Telegram-style @handle)
+  const statusUnameInput = document.getElementById('status-username-input');
+  const statusUnameHint = document.getElementById('status-username-hint');
+  if (statusUnameInput && statusUnameHint) {
+    attachUsernameLiveHint(statusUnameInput, statusUnameHint);
+  }
+
   // Connections
   document.getElementById('btn-send-invite')?.addEventListener('click', async () => {
     const input = document.getElementById('friend-id-input');
@@ -2940,7 +3095,7 @@ function initEventListeners() {
     const id = input?.value.trim();
 
     if (!id) {
-      showToast('Please enter a Pulse ID.', 'error');
+      showToast('Please enter a @username.', 'error');
       return;
     }
     if (btn.disabled) return;
@@ -2967,33 +3122,38 @@ function initEventListeners() {
     showToast('Refreshed!');
   });
 
+  const myHandle = () => (state.userProfile?.username ? `@${state.userProfile.username}` : '');
+
   document.getElementById('btn-copy-id')?.addEventListener('click', async () => {
-    if (!state.userProfile?.id) return;
+    const handle = myHandle();
+    if (!handle) return;
     try {
-      await navigator.clipboard.writeText(state.userProfile.id);
+      await navigator.clipboard.writeText(handle);
       _flashCopyFeedback('btn-copy-id');
-      showToast('Pulse ID copied to clipboard! 📋');
+      showToast('Username copied to clipboard! 📋');
     } catch (err) {
-      showToast('Failed to copy ID', 'error');
+      showToast('Failed to copy username', 'error');
     }
   });
 
   document.getElementById('my-id-display')?.addEventListener('click', async () => {
-    if (!state.userProfile?.id) return;
+    const handle = myHandle();
+    if (!handle) return;
     try {
-      await navigator.clipboard.writeText(state.userProfile.id);
+      await navigator.clipboard.writeText(handle);
       _flashCopyFeedback('my-id-display');
-      showToast('Pulse ID copied to clipboard! 📋');
+      showToast('Username copied to clipboard! 📋');
     } catch (err) {
-      showToast('Failed to copy ID', 'error');
+      showToast('Failed to copy username', 'error');
     }
   });
 
   // Share invite deep link — Web Share API on mobile, clipboard fallback
   document.getElementById('btn-share-id')?.addEventListener('click', async () => {
-    if (!state.userProfile?.id) return;
-    const link = `${window.location.origin}/?invite=${state.userProfile.id}`;
-    const text = `Join me on Pulse! Tap to connect: ${link}`;
+    const handle = myHandle();
+    if (!handle) return;
+    const link = `${window.location.origin}/?invite=${handle}`;
+    const text = `Join me on Pulse! My username is ${handle} — tap to connect: ${link}`;
 
     if (navigator.share) {
       try {
@@ -3404,7 +3564,14 @@ function setupAndroidBackButton() {
         return;
       }
 
-      // 3) Close status / location modals
+      // 3) Close username onboarding modal
+      const onboardModal = document.getElementById('username-onboarding-modal');
+      if (onboardModal && onboardModal.style.display === 'flex') {
+        onboardModal.style.display = 'none';
+        return;
+      }
+
+      // 4) Close status / location modals
       const statusModal = document.getElementById('status-modal');
       if (statusModal && statusModal.style.display === 'flex') {
         statusModal.style.display = 'none';
