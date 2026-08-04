@@ -319,6 +319,23 @@ create table if not exists public.push_subscriptions (
 -- a table that already exists, so add the endpoint column explicitly + backfill
 -- it from the stored subscription JSON, then drop the OLD functional unique
 -- constraint (named by Postgres from its columns) and recreate the real one.
+
+-- 0. If endpoint exists as a GENERATED column (a read-only column that can only
+--    be set to DEFAULT — the app's upsert writes it, so this must be a plain
+--    column), drop it first. Dropping cascades any dependent constraint.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'push_subscriptions'
+      and column_name = 'endpoint'
+      and is_generated = 'ALWAYS'
+  ) then
+    alter table public.push_subscriptions drop column endpoint;
+  end if;
+end $$;
+
 alter table public.push_subscriptions add column if not exists endpoint text not null default '';
 update public.push_subscriptions
 set endpoint = subscription->>'endpoint'
