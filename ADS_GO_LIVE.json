@@ -1,0 +1,99 @@
+{
+  "title": "Pulse — Ads Go-Live Checklist",
+  "description": "Everything needed to turn on ad monetization (Google AdSense on web + Google AdMob on Android APK). The code is already in place and dormant until the IDs below are configured.",
+  "created": "2026-08-04",
+  "status": "NOT_STARTED",
+  "networks": [
+    {
+      "network": "Google AdSense",
+      "platform": "Web (Vercel)",
+      "signup_url": "https://adsense.google.com",
+      "required": [
+        "Google account",
+        "Site approval (Vercel domain must be verified and have enough content/policy-compliant pages)",
+        "Privacy policy page published on the site",
+        "GDPR consent solution for EU/UK visitors (e.g. Google UMP or an IAB CMP) before personalized ads"
+      ],
+      "get_these_ids": [
+        {
+          "id_name": "Publisher ID (clientId)",
+          "format": "ca-pub-XXXXXXXXXXXXXXXX",
+          "where_to_paste": "src/ads.js → ADS_CONFIG.adsense.clientId"
+        },
+        {
+          "id_name": "Ad unit slot ID (adSlot)",
+          "format": "XXXXXXXXXX (numeric)",
+          "where_to_paste": "src/ads.js → ADS_CONFIG.adsense.adSlot"
+        }
+      ],
+      "steps": [
+        "Create AdSense account and complete signup",
+        "Add and verify the Vercel domain (pulse-gray-eight.vercel.app) in AdSense",
+        "Publish a privacy policy page and link it",
+        "Wait for AdSense site approval (can take days–weeks)",
+        "Create a Responsive ad unit (auto format)",
+        "Copy the Publisher ID + slot ID into src/ads.js",
+        "Set ADS_CONFIG.enableWebAds = true",
+        "Rebuild, push, verify the ad renders above Friends' Status History"
+      ]
+    },
+    {
+      "network": "Google AdMob",
+      "platform": "Android APK (Capacitor)",
+      "signup_url": "https://admob.google.com",
+      "required": [
+        "AdMob account",
+        "Android app registered with package com.pulse.statusapp",
+        "Privacy policy URL configured in Play Console",
+        "GDPR consent (UMP) for EU/UK users before personalized ads",
+        "Google Play store listing approval"
+      ],
+      "get_these_ids": [
+        {
+          "id_name": "AdMob App ID",
+          "format": "ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX",
+          "where_to_paste": "android/app/src/main/AndroidManifest.xml → com.google.android.gms.ads.APPLICATION_ID AND src/ads.js → ADS_CONFIG.admob.appId"
+        },
+        {
+          "id_name": "Banner ad unit ID",
+          "format": "ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX",
+          "where_to_paste": "src/ads.js → ADS_CONFIG.admob.bannerAdUnitId"
+        }
+      ],
+      "steps": [
+        "Create AdMob account",
+        "Add app with package id com.pulse.statusapp",
+        "Create a Banner ad unit",
+        "Paste the App ID in BOTH AndroidManifest.xml and src/ads.js (they must match — enabling one without the other crashes on launch)",
+        "Paste the banner unit ID into src/ads.js",
+        "Set ADS_CONFIG.enableNativeAds = true",
+        "Rebuild the APK (npx cap sync android + gradle build)",
+        "Verify the test banner shows, then confirm real ads fill"
+      ]
+    }
+  ],
+  "shared_toggles": {
+    "file": "src/ads.js",
+    "config_keys": {
+      "enableWebAds": false,
+      "enableNativeAds": false,
+      "devMode": false
+    },
+    "notes": [
+      "devMode: true loads Google's official TEST ad unit so you can preview the slot before approval — never ship with devMode on.",
+      "Until enableWebAds/enableNativeAds are true, the slot stays hidden and nothing loads."
+    ]
+  },
+  "compliance_reminders": [
+    "Publish a privacy policy and link it from the app (required by AdSense, AdMob, and Google Play)",
+    "Implement consent management (GDPR for EU/UK, CCPA for California) before serving personalized ads",
+    "AdMob requires the app to be on Google Play with an approved store listing",
+    "Do not enable ads until you have real, approved IDs — placeholders crash AdMob init if only partially configured"
+  ],
+  "verify_after_go_live": [
+    "Web: ad renders in the slot above Friends' Status History on pulse-gray-eight.vercel.app",
+    "APK: bottom banner shows, doesn't cover the header or chat input",
+    "Both networks report impressions in their dashboards",
+    "No console errors for adsbygoogle or AdMob"
+  ]
+}

@@ -1,6 +1,7 @@
 import './style.css';
 import { compressVideoFFmpeg } from './videoCompress.js';
 import { openCamera } from './camera.js';
+import { initAds } from './ads.js';
 import {
   initSupabase,
   isSupabaseConfigured,
@@ -599,6 +600,9 @@ function renderSkeletons() {
 
 async function loadDashboardData() {
   try {
+    // Show the ad slot once the dashboard renders (idempotent, no-op until
+    // real AdSense/AdMob IDs are configured in src/ads.js)
+    initAds();
     const cachedConns = getCachedConnections();
     if (!cachedConns) renderSkeletons();
 
