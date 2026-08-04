@@ -2701,6 +2701,10 @@ function openUsernameModal(mode = 'onboarding') {
   if (!modal || !input || !hint) return;
 
   _usernameModalMode = mode;
+  // Cancel is only offered when renaming — onboarding is mandatory (no skip),
+  // so it stays hidden there.
+  const cancelBtn = document.getElementById('username-onboarding-cancel');
+  if (cancelBtn) cancelBtn.style.display = mode === 'rename' ? 'block' : 'none';
   input.value = state.userProfile?.username || '';
   hint.textContent = mode === 'rename'
     ? `Current: @${state.userProfile?.username || ''} · max 2 changes/week`
@@ -2963,6 +2967,11 @@ function initEventListeners() {
     document.getElementById('status-modal').style.display = 'none';
   });
 
+  // Username onboarding modal — cancel (rename mode only)
+  document.getElementById('username-onboarding-cancel')?.addEventListener('click', () => {
+    document.getElementById('username-onboarding-modal').style.display = 'none';
+  });
+
   // Username onboarding modal — save / skip
   document.getElementById('username-onboarding-save')?.addEventListener('click', async () => {
     const modal = document.getElementById('username-onboarding-modal');
@@ -3025,6 +3034,8 @@ function initEventListeners() {
     if (!ok) return;
     try {
       await deactivateAccount();
+      // Close the account modal automatically — no manual Close needed
+      document.getElementById('account-modal').style.display = 'none';
       showToast('Account deactivated. See you soon! 👋');
       await signOutUser();
       state.userProfile = null;
@@ -3050,6 +3061,8 @@ function initEventListeners() {
       const cancelBtn = document.getElementById('btn-cancel-deletion');
       if (status) status.textContent = `Deletion requested ${new Date().toLocaleDateString()} — your account will be permanently removed in 30 days unless you cancel.`;
       if (cancelBtn) cancelBtn.style.display = 'block';
+      // Close the account modal automatically — the toast confirms the action
+      document.getElementById('account-modal').style.display = 'none';
       showToast('Deletion scheduled. You can cancel anytime within 30 days.');
     } catch (err) {
       showToast(err.message || 'Could not schedule deletion.', 'error');
@@ -3063,6 +3076,8 @@ function initEventListeners() {
       if (status) status.textContent = 'Deletion cancelled — your account is safe. 🎉';
       if (cancelBtn) cancelBtn.style.display = 'none';
       state.userProfile = { ...state.userProfile, deletion_requested_at: null };
+      // Close the account modal automatically — the toast confirms the action
+      document.getElementById('account-modal').style.display = 'none';
       showToast('Deletion cancelled.');
     } catch (err) {
       showToast(err.message || 'Could not cancel deletion.', 'error');
