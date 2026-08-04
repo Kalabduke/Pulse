@@ -1870,7 +1870,7 @@ function _showVideoProgress() {
   el.innerHTML = `
     <div class="video-progress-box">
       <div style="font-size:24px;margin-bottom:10px;">🎬</div>
-      <div id="vp-label" style="font-size:14px;font-weight:600;margin-bottom:12px;">Preparing compressor...</div>
+      <div id="vp-label" style="font-size:14px;font-weight:600;margin-bottom:12px;">Loading…</div>
       <div class="video-progress-bar-track">
         <div class="video-progress-bar-fill" id="vp-fill" style="width:0%"></div>
       </div>
@@ -1888,10 +1888,9 @@ function _updateVideoProgress(el, pct) {
   const pctEl = el.querySelector('#vp-pct');
   if (fill)  fill.style.width = `${pct}%`;
   if (pctEl) pctEl.textContent = `${pct}%`;
-  if (label) {
-    if (pct < 20)  label.textContent = 'Preparing...';
-    else           label.textContent = 'Compressing video...';
-  }
+  // Keep the copy calm and user-friendly — never expose internal terms like
+  // "compressing". Just show progress.
+  if (label) label.textContent = 'Loading…';
 }
 
 function _hideVideoProgress(el) {

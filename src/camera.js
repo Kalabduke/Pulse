@@ -4,6 +4,39 @@
 
 let _stream = null;
 
+// getUserMedia with a hard timeout — a hung/slow camera request must never
+// make the user stare at "Starting camera..." for ages. A settled flag makes
+// sure a stream that resolves AFTER the timeout fired gets stopped (no
+// camera/mic LED left on) instead of leaking.
+function getUserMediaWithTimeout(constraints, ms = 6000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new DOMException('Camera request timed out', 'TimeoutError'));
+    }, ms);
+    navigator.mediaDevices.getUserMedia(constraints).then(
+      (stream) => {
+        clearTimeout(timer);
+        if (settled) {
+          // Timeout already fired — never leak the camera/mic stream
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+        settled = true;
+        resolve(stream);
+      },
+      (err) => {
+        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        reject(err);
+      }
+    );
+  });
+}
+
 export function openCamera(onCapture, onError) {
   document.getElementById('pulse-camera-overlay')?.remove();
 
@@ -62,6 +95,7 @@ export function openCamera(onCapture, onError) {
   let facingMode = 'environment';
   let mode = 'photo';
   let recorder = null, recChunks = [], recTimer = null, recSecs = 0;
+  let startingRec = false; // guards double-taps while the mic is being requested
 
   const closeCamera = () => {
     clearInterval(recTimer);
@@ -79,31 +113,41 @@ export function openCamera(onCapture, onError) {
       closeCamera(); onError?.('no_camera'); return;
     }
 
-    // Try progressively simpler constraints until one works
+    // Fastest-first: video only, no audio (avoids the mic permission prompt)
+    // and no resolution hints (avoids slow camera negotiation). Audio is added
+    // lazily at record time, so the preview appears almost instantly.
+    // The FIRST attempt triggers the browser permission prompt, so it gets a
+    // long timeout — users need time to read it and tap "Allow". Only the
+    // retry gets the short timeout, so a genuinely hung camera still hands
+    // off to native quickly.
     const tries = [
-      { video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
-      { video: { facingMode: { ideal: facing } }, audio: false },
-      { video: true, audio: false },
+      { ms: 30000, constraints: { video: { facingMode: { ideal: facing } } } },
+      { ms: 6000,  constraints: { video: true } },
     ];
 
     let gotStream = false;
-    for (const c of tries) {
+    for (const { ms, constraints } of tries) {
       try {
-        _stream = await navigator.mediaDevices.getUserMedia(c);
+        _stream = await getUserMediaWithTimeout(constraints, ms);
         gotStream = true;
         break;
       } catch (e) {
         console.warn('[Camera]', e.name, e.message);
-        if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
-          closeCamera(); onError?.('no_camera'); return;
+        // No camera, denied, or took too long — hand off to the OS native
+        // camera (which has its own permission flow) instead of retrying
+        // pointless attempts or leaving the user stuck.
+        if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError' || e.name === 'NotAllowedError') {
+          closeCamera();
+          onError?.('no_camera');
+          return;
         }
-        // For NotAllowedError or others: keep trying simpler constraints
+        // OverconstrainedError or TimeoutError: retry with simpler constraints
       }
     }
 
     if (!gotStream) {
-      // Still failed — just show error, stay open so user sees it
-      statusEl.textContent = '📷 Camera unavailable. Check browser permissions and try again.';
+      closeCamera();
+      onError?.('no_camera');
       return;
     }
 
@@ -162,8 +206,23 @@ export function openCamera(onCapture, onError) {
     }, 'image/jpeg', 0.85);
   };
 
-  const startRec = () => {
-    if (!_stream) return;
+  // Add a mic track to the live stream only when recording starts — this way
+  // opening the camera never waits on a microphone permission prompt.
+  const ensureAudio = async () => {
+    if (!_stream || _stream.getAudioTracks().length > 0) return;
+    try {
+      const audio = await getUserMediaWithTimeout({ audio: true }, 5000);
+      audio.getAudioTracks().forEach(t => _stream.addTrack(t));
+    } catch {
+      // No mic permission — record silently rather than blocking the video
+    }
+  };
+
+  const startRec = async () => {
+    if (!_stream || startingRec) return;
+    startingRec = true;
+    try {
+      await ensureAudio();
     const mimes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
     const mime = mimes.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || 'video/webm';
     recChunks = [];
@@ -176,6 +235,7 @@ export function openCamera(onCapture, onError) {
       if (blob.size) onCapture(new File([blob], `video_${Date.now()}.${ext}`, { type: mime }));
     };
     recorder.start(200);
+    startingRec = false;
     inner.style.background='#ef4444'; inner.style.borderRadius='4px';
     recBar.style.display='flex'; recSecs=0; timerEl.textContent='0:00';
     recTimer = setInterval(() => {
@@ -183,6 +243,12 @@ export function openCamera(onCapture, onError) {
       timerEl.textContent=`${Math.floor(recSecs/60)}:${String(recSecs%60).padStart(2,'0')}`;
       if (recSecs >= 10) stopRec();
     }, 1000);
+    } catch (err) {
+      // Mic request failed or recorder setup errored — reset the guard so the
+      // user can simply tap record again.
+      startingRec = false;
+      console.warn('[Camera] Recorder start failed:', err);
+    }
   };
 
   const stopRec = () => {

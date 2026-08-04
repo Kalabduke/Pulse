@@ -43,9 +43,11 @@ export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   const form = new FormData();
   form.append('file',          file);
   form.append('upload_preset', CLOUDINARY_PRESET);
-  form.append('folder',        'pulse');
-  // Note: unsigned presets don't allow eager transformations
-  // We apply transformations via the delivery URL after upload
+  // NOTE: no `folder` param — for UNSIGNED presets Cloudinary only honors the
+  // folder set inside the preset itself; passing one here would be ignored or
+  // rejected. Set the folder on the preset in the Cloudinary dashboard instead.
+  // Unsigned presets also don't allow eager transformations — we apply them
+  // via the delivery URL after upload.
 
   onProgress(10);
 
