@@ -2853,6 +2853,14 @@ function initEventListeners() {
       _setEmojiPickerDisabled(true);
     }
 
+    // Belt-and-braces: never leave the save button stuck disabled from a
+    // previous failed attempt — reset it every time the modal opens.
+    const saveBtn = document.getElementById('btn-save-status');
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<span>Save & Pulse Out!</span>';
+    }
+
     if (modal) modal.style.display = 'flex';
   });
 
@@ -2969,6 +2977,17 @@ function initEventListeners() {
   document.getElementById('btn-save-status')?.addEventListener('click', async () => {
     if (!state.userProfile) return;
 
+    // Validate FIRST — never disable the button on a validation error,
+    // otherwise it gets stuck showing "Saving..." forever.
+    const recipientRadio = document.querySelector('input[name="recipient"]:checked');
+    const recipientMode = recipientRadio?.value || 'all';
+    const directFriendId = document.getElementById('direct-friend-select')?.value;
+
+    if (recipientMode === 'direct' && !directFriendId) {
+      showToast('Please select a friend to send to.', 'error');
+      return;
+    }
+
     const saveBtn = document.getElementById('btn-save-status');
     if (saveBtn.disabled) return;
     saveBtn.disabled = true;
@@ -2979,16 +2998,6 @@ function initEventListeners() {
     const textInput = document.getElementById('status-text-input');
     const name = nameInput?.value.trim() || state.userProfile.name;
     const text = textInput?.value.trim() || '';
-
-    // Check recipient mode
-    const recipientRadio = document.querySelector('input[name="recipient"]:checked');
-    const recipientMode = recipientRadio?.value || 'all';
-    const directFriendId = document.getElementById('direct-friend-select')?.value;
-
-    if (recipientMode === 'direct' && !directFriendId) {
-      showToast('Please select a friend to send to.', 'error');
-      return;
-    }
 
     try {
       let imageUrl = null;

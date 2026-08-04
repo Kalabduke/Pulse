@@ -673,6 +673,14 @@ body {
   padding: 20px;
 }
 
+/* Confirm dialogs must ALWAYS paint above any other open modal
+   (account modal, nickname modal, etc. are all z-index 1100 and
+   appear after this one in the DOM — without this the verification
+   popup would render underneath them). */
+#custom-confirm-modal {
+  z-index: 1200;
+}
+
 .custom-modal-box {
   background: hsl(var(--bg-surface));
   border: 1px solid var(--border-glow);
