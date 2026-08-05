@@ -1237,6 +1237,7 @@ function handleTypingEvent(record, eventType) {
 
   showTypingIndicator();
   clearTimeout(friendTypingTimer);
+  friendTypingAt = Date.now();
   // Hide 3s after the last typing ping
   friendTypingTimer = setTimeout(hideTypingIndicator, 3000);
 }
@@ -1287,6 +1288,7 @@ async function openChat(friend) {
   closeReactPicker();
   closeChatSearch();
   clearTimeout(friendTypingTimer);
+  friendTypingAt = 0;
   hideTypingIndicator();
 
   document.getElementById('chat-friend-emoji').textContent = friend.statusEmoji;
@@ -1337,6 +1339,7 @@ async function openChat(friend) {
    ========================================== */
 let receiptSyncTimer = null;
 let receiptSyncing = false;
+let friendTypingAt = 0; // last typing ping timestamp (for stale-indicator fallback)
 
 function startReceiptSync(friendId) {
   stopReceiptSync();
@@ -1352,10 +1355,36 @@ function startReceiptSync(friendId) {
       // Cover everything loaded in the open chat (grows with paging), not just
       // the newest 30 — receipts often change in bulk when the other person opens
       // the chat.
-      const messages = await fetchDirectMessages(friendId, Math.max(chatMessageLimit, 30));
-      // patchMessageBubble is a no-op when nothing visible changed, so this
-      // is cheap: it only re-renders ticks/reactions that actually updated.
-      messages.forEach(msg => patchMessageBubble(msg));
+      const fetched = await fetchDirectMessages(friendId, Math.max(chatMessageLimit, 30));
+
+      // 1) Receipts + reactions — patch in place. patchMessageBubble is a no-op
+      //    when nothing visible changed, so this only re-renders what updated.
+      fetched.forEach(msg => patchMessageBubble(msg));
+
+      // 2) Deletions — anything still cached that sits inside the fetched window
+      //    but is missing from the server was deleted; remove it in place (a
+      //    fallback for the realtime DELETE event). Boundary guard: a cached row
+      //    OLDER than the oldest fetched row is just outside the page window,
+      //    not necessarily deleted — never touch it. Skipped while paging up,
+      //    because the cache is mid-rebuild then.
+      if (!chatPagingUp) {
+        const fetchedIds = new Set(fetched.map(m => m.id));
+        const oldestFetched = fetched.length ? new Date(fetched[0].created_at).getTime() : Infinity;
+        Object.keys(chatMessagesCache).forEach(id => {
+          const cached = chatMessagesCache[id];
+          if (!cached) return;
+          const ts = new Date(cached.created_at).getTime();
+          if (!fetchedIds.has(id) && ts >= oldestFetched) removeChatMessageRow(id);
+        });
+      }
+
+      // 3) Typing-off — if the indicator is up but no typing ping has arrived
+      //    for a while (the realtime DELETE was dropped), hide it. The in-app
+      //    timer still handles the fast path; this is the belt-and-braces net.
+      const typingEl = document.getElementById('chat-typing-indicator');
+      if (typingEl && typingEl.style.display !== 'none' && Date.now() - friendTypingAt > 4000) {
+        hideTypingIndicator();
+      }
     } catch { /* transient network hiccup — retry next tick */ }
     finally {
       receiptSyncing = false;
