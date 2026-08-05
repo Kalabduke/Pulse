@@ -2913,13 +2913,9 @@ function initEventListeners() {
 
   // Settings gear in the sidebar head + clicking your profile row both open
   // the account modal (the header keeps its own Update button)
-  document.getElementById('sidebar-settings-btn')?.addEventListener('click', () => {
-    document.getElementById('btn-account')?.click();
-  });
+  document.getElementById('sidebar-settings-btn')?.addEventListener('click', openAccountModal);
 
-  document.getElementById('desktop-sidebar-me')?.addEventListener('click', () => {
-    document.getElementById('btn-account')?.click();
-  });
+  document.getElementById('desktop-sidebar-me')?.addEventListener('click', openAccountModal);
 
   // Tap a DM notification toast → open that chat
   document.getElementById('global-toast')?.addEventListener('click', () => {
@@ -3197,8 +3193,9 @@ function initEventListeners() {
     }
   });
 
-  // Account modal — deactivate / delete (Instagram-style)
-  document.getElementById('btn-account')?.addEventListener('click', () => {
+  // Account modal — deactivate / delete (Instagram-style). Shared so the
+  // sidebar settings gear + profile row can open it without a header button.
+  function openAccountModal() {
     const modal = document.getElementById('account-modal');
     const status = document.getElementById('account-modal-status');
     const cancelBtn = document.getElementById('btn-cancel-deletion');
@@ -3214,7 +3211,8 @@ function initEventListeners() {
     }
     if (cancelBtn) cancelBtn.style.display = deleting ? 'block' : 'none';
     modal.style.display = 'flex';
-  });
+  }
+  window.openAccountModal = openAccountModal;
   document.getElementById('btn-account-close')?.addEventListener('click', () => {
     document.getElementById('account-modal').style.display = 'none';
   });
