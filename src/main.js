@@ -1325,6 +1325,51 @@ async function openChat(friend) {
 
   const container = document.getElementById('chat-messages');
   if (container) container.scrollTop = container.scrollHeight;
+
+  // Receipt-sync fallback: keep the ✓/✓✓/seen ticks live even if realtime
+  // UPDATE events are dropped (e.g. REPLICA IDENTITY FULL not yet applied in
+  // the DB). Patches bubbles in place — never a full chat reload.
+  startReceiptSync(friend.friendId);
+}
+
+/* ==========================================
+   RECEIPT SYNC — guaranteed live ticks without refresh
+   ========================================== */
+let receiptSyncTimer = null;
+let receiptSyncing = false;
+
+function startReceiptSync(friendId) {
+  stopReceiptSync();
+  const sync = async () => {
+    // Chat closed, switched, or signed out — stop syncing
+    if (!state.userProfile || !currentChatFriend || currentChatFriend.friendId !== friendId) {
+      stopReceiptSync();
+      return;
+    }
+    if (receiptSyncing) return; // previous fetch still in flight — skip this tick
+    receiptSyncing = true;
+    try {
+      // Cover everything loaded in the open chat (grows with paging), not just
+      // the newest 30 — receipts often change in bulk when the other person opens
+      // the chat.
+      const messages = await fetchDirectMessages(friendId, Math.max(chatMessageLimit, 30));
+      // patchMessageBubble is a no-op when nothing visible changed, so this
+      // is cheap: it only re-renders ticks/reactions that actually updated.
+      messages.forEach(msg => patchMessageBubble(msg));
+    } catch { /* transient network hiccup — retry next tick */ }
+    finally {
+      receiptSyncing = false;
+    }
+  };
+  sync();
+  receiptSyncTimer = setInterval(sync, 10000);
+}
+
+function stopReceiptSync() {
+  if (receiptSyncTimer) {
+    clearInterval(receiptSyncTimer);
+    receiptSyncTimer = null;
+  }
 }
 
 function formatChatDay(date) {
@@ -3876,6 +3921,7 @@ function initEventListeners() {
   });
 
   document.getElementById('chat-back-btn')?.addEventListener('click', () => {
+    stopReceiptSync(); // leaving the chat — no more tick syncing
     // Stop broadcasting typing for this chat
     if (currentChatFriend?.friendId) setTypingStatus(currentChatFriend.friendId, false);
     clearTimeout(friendTypingTimer);
