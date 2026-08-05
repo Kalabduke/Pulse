@@ -3046,6 +3046,17 @@ button svg {
     gap: 10px;
     padding: 12px 14px;
     border-top: 1px solid var(--border-glow);
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .desktop-sidebar-me:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .desktop-me-chevron {
+    color: hsl(var(--text-muted));
+    flex-shrink: 0;
   }
 
   .desktop-me-avatar {
@@ -3153,7 +3164,7 @@ button svg {
 
   .accent-card { grid-column: 1 / -1; }
   .friends-feed-section { grid-column: 1; grid-row: 2; }
-  .connections-card { grid-column: 2; grid-row: 2; }
-  .ad-slot { grid-column: 2; grid-row: 3; }
-  .history-card { grid-column: 2; grid-row: 4; }
+  .history-card { grid-column: 2; grid-row: 2; }
+  .connections-card { grid-column: 2; grid-row: 3; }
+  .ad-slot { grid-column: 2; grid-row: 4; }
 }

@@ -2911,11 +2911,13 @@ function initEventListeners() {
 
   document.getElementById('sidebar-search-input')?.addEventListener('input', renderDesktopSidebar);
 
-  document.getElementById('sidebar-update-btn')?.addEventListener('click', () => {
-    document.getElementById('btn-open-status-modal')?.click();
+  // Settings gear in the sidebar head + clicking your profile row both open
+  // the account modal (the header keeps its own Update button)
+  document.getElementById('sidebar-settings-btn')?.addEventListener('click', () => {
+    document.getElementById('btn-account')?.click();
   });
 
-  document.getElementById('sidebar-account-btn')?.addEventListener('click', () => {
+  document.getElementById('desktop-sidebar-me')?.addEventListener('click', () => {
     document.getElementById('btn-account')?.click();
   });
 
