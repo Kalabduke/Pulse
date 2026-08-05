@@ -107,12 +107,13 @@ async function renderNativeAd() {
 
   try {
     const { AdMob, BannerAdPosition, BannerAdSize } = await import('@capacitor-community/admob');
-    await AdMob.initialize({ requestTrackingAuthorization: true });
+    await AdMob.initialize();
+    await AdMob.requestTrackingAuthorization().catch(() => {});
     await AdMob.showBanner({
       // Official Google test unit — renders a test banner in devMode
       adId: testMode ? 'ca-app-pub-3940256099942544/6300978111' : ADS_CONFIG.admob.bannerAdUnitId,
       position: BannerAdPosition.BOTTOM_CENTER,
-      size: BannerAdSize.ADAPTIVE_BANNER,
+      adSize: BannerAdSize.ADAPTIVE_BANNER,
       margin: 8,
       isTesting: testMode
     });

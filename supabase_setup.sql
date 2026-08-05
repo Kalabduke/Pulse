@@ -834,3 +834,26 @@ begin
 end;
 $$;
 
+-- ====================================================================
+-- CRITICAL FIX: REPLICA IDENTITY FULL for realtime tables
+-- ====================================================================
+-- Supabase Realtime evaluates postgres_changes filters against the WAL
+-- payload. With the DEFAULT replica identity, UPDATE/DELETE events only
+-- carry the primary key + the columns that changed — so filters on non-PK
+-- columns (sender_id, recipient_id, user_id, friend_id, to_user_id) find
+-- nothing to match and the event is SILENTLY DROPPED. That's why read /
+-- delivered ticks, reactions, message deletions, invite acceptances and
+-- location updates never arrived live until a manual refresh.
+--
+-- REPLICA IDENTITY FULL makes every event carry the full row, so the
+-- filters match and realtime actually fires.
+--
+-- Note: profiles is intentionally excluded — its filter uses the PK (id),
+-- which the default identity always includes, and heartbeat last_seen
+-- updates would bloat the WAL for no benefit.
+alter table public.messages replica identity full;
+alter table public.connections replica identity full;
+alter table public.private_statuses replica identity full;
+alter table public.location_shares replica identity full;
+alter table public.typing_statuses replica identity full;
+

@@ -23,9 +23,9 @@ const TRANSFORM = 'w_854,h_480,c_limit,vc_h264,br_640k,du_10,f_mp4,q_auto:low';
  * Upload video to Cloudinary with server-side compression.
  * @param {File}     file
  * @param {Function} onProgress  0-100 integer
- * @returns {Promise<{file: File, url: string}>}
- *   file = a 1-byte placeholder File (actual video is on Cloudinary CDN)
- *   url  = the compressed Cloudinary delivery URL
+ * @returns {Promise<File>}
+ *   A 1-byte placeholder File carrying `_cloudinaryUrl` = the compressed
+ *   Cloudinary delivery URL (the actual video lives on the Cloudinary CDN).
  */
 export async function compressVideoFFmpeg(file, onProgress = () => {}) {
   if (!file) throw new Error('No file provided.');

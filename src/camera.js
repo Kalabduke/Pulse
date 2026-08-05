@@ -85,7 +85,7 @@ export function openCamera(onCapture, onError) {
 
   document.body.appendChild(overlay);
 
-  const video   = overlay.querySelector('#pulse-cam-video');
+  const video   = /** @type {HTMLVideoElement} */ (overlay.querySelector('#pulse-cam-video'));
   const statusEl = overlay.querySelector('#pulse-cam-status');
   const recBar  = overlay.querySelector('#pulse-cam-rec-bar');
   const timerEl = overlay.querySelector('#pulse-cam-timer');

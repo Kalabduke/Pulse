@@ -1,7 +1,13 @@
+// @ts-check
 import './style.css';
-import { compressVideoFFmpeg } from './videoCompress.js';
-import { openCamera } from './camera.js';
-import { initAds } from './ads.js';
+import {
+  dbGet,
+  dbSet,
+  dbDelete,
+  clearUserCache,
+  dashKey,
+  chatKey
+} from './db.js';
 import {
   initSupabase,
   isSupabaseConfigured,
@@ -184,7 +190,7 @@ function compressImage(file, maxWidth = 1200, quality = 0.8, mirrorFix = false) 
         }, 'image/jpeg', quality);
       };
       img.onerror = reject;
-      img.src = e.target.result;
+      img.src = /** @type {string} */ (e.target.result);
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
@@ -210,7 +216,7 @@ function compressImageToDataUrl(file, maxWidth = 900, quality = 0.72) {
         resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.onerror = () => reject(new Error('Could not read image.'));
-      img.src = e.target.result;
+      img.src = /** @type {string} */ (e.target.result);
     };
     reader.onerror = () => reject(new Error('Could not read file.'));
     reader.readAsDataURL(file);
@@ -525,7 +531,12 @@ async function setupRealtimeSync() {
         state._rtMsgDedup[msg.id] = now;
       }
       const isSelf = msg.sender_id === state.userProfile?.id;
-      if (!isSelf && currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
+      if (isSelf && currentChatFriend && msg.recipient_id === currentChatFriend.friendId) {
+        // Echo of my own send — append in place if this chat is open. Deduped
+        // by appendChatMessage's cache guard, so it can't double-append even
+        // when the optimistic append already ran.
+        appendChatMessage(msg);
+      } else if (!isSelf && currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
         // Chat is open → append the bubble in place, mark delivered + read.
         // Idempotent: my own send's echo is deduped by appendChatMessage's
         // cache guard, so it can't double-append even if it races the send.
@@ -628,10 +639,24 @@ function renderSkeletons() {
 async function loadDashboardData() {
   try {
     // Show the ad slot once the dashboard renders (idempotent, no-op until
-    // real AdSense/AdMob IDs are configured in src/ads.js)
-    initAds();
+    // real AdSense/AdMob IDs are configured in src/ads.js). Ads load lazily
+    // so they never block the first dashboard paint.
+    import('./ads.js').then(m => m.initAds()).catch(() => {});
+
     const cachedConns = getCachedConnections();
-    if (!cachedConns) renderSkeletons();
+    if (!cachedConns) {
+      // Instant first paint from last session's IndexedDB cache while the
+      // fresh network data loads (skeletons only when nothing is cached).
+      if (state.userProfile?.id) {
+        const idb = await dbGet('kv', dashKey(state.userProfile.id));
+        if (idb?.connections?.length) {
+          state.connections = idb.connections;
+          renderFriendsFeed();
+          renderPendingInvites();
+        }
+      }
+      renderSkeletons();
+    }
 
     // fetchPrivateStatusesForMe is safe — if the table doesn't exist yet it returns empty
     const [profile, connections, privateStatuses] = await Promise.all([
@@ -675,6 +700,10 @@ async function loadDashboardData() {
     updateLocationIndicator();
 
     if (!cachedConns) setCachedConnections(connections);
+    // Persist a copy so the next boot paints instantly (and works offline)
+    if (state.userProfile?.id) {
+      dbSet('kv', dashKey(state.userProfile.id), { connections, savedAt: Date.now() });
+    }
     state.connections = connections;
     renderFriendsFeed();
     renderFriendLocations();
@@ -1302,7 +1331,7 @@ function formatChatDay(date) {
   const now = new Date();
   const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const diffDays = Math.round((startToday - startDay) / 86400000);
+  const diffDays = Math.round((startToday.getTime() - startDay.getTime()) / 86400000);
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
@@ -1320,16 +1349,41 @@ async function loadChatMessages(friendId, limit = chatMessageLimit, keepScroll =
   const wasPaging = chatPagingUp || keepScroll;
   const prevHeight = container.scrollHeight;
   const prevScrollTop = container.scrollTop;
+  const myId = state.userProfile?.id;
 
-  container.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
+  // Instant re-open: paint the locally cached copy before the network round-trip
+  let paintedFromCache = false;
+  if (!wasPaging && myId) {
+    const cached = await dbGet('chats', chatKey(myId, friendId));
+    if (Array.isArray(cached) && cached.length > 0) {
+      chatMessagesCache = {};
+      const rows = [];
+      let lastDayKey = '';
+      cached.forEach(msg => {
+        const d = new Date(msg.created_at);
+        const dayKey = d.toDateString();
+        if (dayKey !== lastDayKey) {
+          lastDayKey = dayKey;
+          rows.push(`<div class="chat-date-sep">${escapeHtml(formatChatDay(d))}</div>`);
+        }
+        rows.push(buildChatRow(msg, myId));
+        chatMessagesCache[msg.id] = msg;
+      });
+      container.innerHTML = rows.join('');
+      container.scrollTop = container.scrollHeight;
+      paintedFromCache = true;
+    }
+  }
+  if (!paintedFromCache) container.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
 
   try {
     const messages = await fetchDirectMessages(friendId, limit);
-    const myId = state.userProfile?.id;
 
     if (messages.length === 0) {
       chatMessagesCache = {};
       container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));padding:40px 0;">No messages yet. Say hello! 👋</div>';
+      // Nothing to keep — drop any stale cached copy of this conversation
+      if (myId) dbDelete('chats', chatKey(myId, friendId));
       return;
     }
 
@@ -1371,9 +1425,16 @@ async function loadChatMessages(friendId, limit = chatMessageLimit, keepScroll =
     } else {
       container.scrollTop = container.scrollHeight;
     }
+
+    // Persist the freshly loaded page so the next open paints instantly
+    if (myId) dbSet('chats', chatKey(myId, friendId), messages);
   } catch (err) {
     chatPagingUp = false;
-    container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
+    // If we painted the cached copy, keep it — the fetch failed (e.g. offline)
+    // and wiping the visible history for an error message defeats the cache.
+    if (!paintedFromCache) {
+      container.innerHTML = '<div style="text-align:center;color:hsl(var(--text-muted));">Failed to load messages</div>';
+    }
   }
 }
 
@@ -1480,6 +1541,7 @@ function patchMessageBubble(msg) {
 
   // Keep the cache in sync for future appends/patches
   chatMessagesCache[msg.id] = { ...(chatMessagesCache[msg.id] || {}), ...msg };
+  persistCurrentChat();
 
   // 1) Receipt ticks — only for our own sent messages
   if (isMine) {
@@ -1509,11 +1571,29 @@ function patchReactionsOnly(msgId, reactions) {
   }
 }
 
-// Append a freshly-inserted message bubble without re-rendering the whole chat
+// Debounced write of the open conversation's messages to IndexedDB, so sends,
+// receipts and reactions survive a refresh. chatMessagesCache only holds the
+// open chat, so its values ARE this conversation.
+let _chatPersistTimer = null;
+function persistCurrentChat() {
+  const myId = state.userProfile?.id;
+  if (!myId || !currentChatFriend) return;
+  clearTimeout(_chatPersistTimer);
+  _chatPersistTimer = setTimeout(() => {
+    const msgs = Object.values(chatMessagesCache)
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    if (msgs.length) dbSet('chats', chatKey(myId, currentChatFriend.friendId), msgs);
+  }, 500);
+}
+
+// Append a freshly-inserted message bubble without re-rendering the whole chat.
+// Returns true if the bubble was appended, false if it bailed (missing
+// container/context, or already in the cache) — callers use that to decide
+// whether to fall back to a full fetch.
 function appendChatMessage(msg) {
   const container = document.getElementById('chat-messages');
-  if (!container || !currentChatFriend) return;
-  if (!msg?.id) return;
+  if (!container || !currentChatFriend) return false;
+  if (!msg?.id) return false;
 
   // Dedup — the widened realtime INSERT filter now echoes my own sends back,
   // so guard against double-appending a message already in the DOM/cache.
@@ -1547,10 +1627,12 @@ function appendChatMessage(msg) {
   wrap.innerHTML = buildChatRow(msg, myId);
   container.appendChild(wrap.firstChild);
   chatMessagesCache[msg.id] = msg;
+  persistCurrentChat();
 
   // Scroll to bottom only if the user was already at/near the bottom
   const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
   if (nearBottom) container.scrollTop = container.scrollHeight;
+  return true;
 }
 
 /* ==========================================
@@ -1589,6 +1671,7 @@ async function toggleReaction(msgId, emoji) {
     patchReactionsOnly(msgId, original);
     showToast('Reactions need the new SQL — run the migration.', 'error');
   }
+  persistCurrentChat();
 }
 
 function toggleReactPicker(msgId, btn) {
@@ -1771,6 +1854,7 @@ function jumpToMessage(msgId) {
 function removeChatMessageRow(msgId) {
   if (!msgId) return;
   delete chatMessagesCache[msgId];
+  persistCurrentChat();
   // Remove the bubble row in the open chat
   const bubble = document.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
   if (bubble) {
@@ -1861,14 +1945,14 @@ async function sendChatMessage() {
       text || '',
       imageUrl
     );
-    // Real-time: append my sent message in place (no full chat reload). The
-    // realtime INSERT echo of my own send (same real id) is deduped by
-    // appendChatMessage, and the friend's delivered/read receipt arrives as
-    // message_updated → the ✓ / ✓✓ / read ticks update live.
-    if (state.realtimeChannel?.state === 'joined') {
-      appendChatMessage({ ...sentMsg, reply: replyTo });
-    } else {
-      // Realtime is down — fall back to a fresh fetch so the message still shows
+    // Real-time: append my sent message in place (no full chat reload). Always
+    // append optimistically — the realtime INSERT echo of my own send (same
+    // real id) is deduped by appendChatMessage's cache guard, so it can't
+    // double-append. No channel-state gate: supabase-js v2 reports 'subscribed',
+    // not 'joined', and the old gate made sent messages invisible until refresh.
+    // If the append bailed (missing container, stale context), fall back to a
+    // fresh fetch so the sent message still renders.
+    if (!appendChatMessage({ ...sentMsg, reply: replyTo })) {
       await loadChatMessages(currentChatFriend.friendId);
     }
   } catch (err) {
@@ -1921,6 +2005,8 @@ async function handleStatusVideo(file) {
   if (!file) return;
   const progressEl = _showVideoProgress();
   try {
+    // Lazy-load FFmpeg only when a video is actually compressed
+    const { compressVideoFFmpeg } = await import('./videoCompress.js');
     const compressed = await compressVideoFFmpeg(file, (pct) => {
       _updateVideoProgress(progressEl, pct);
     });
@@ -1967,6 +2053,8 @@ async function handleChatVideo(file) {
   if (!file) return;
   const progressEl = _showVideoProgress();
   try {
+    // Lazy-load FFmpeg only when a video is actually compressed
+    const { compressVideoFFmpeg } = await import('./videoCompress.js');
     const compressed = await compressVideoFFmpeg(file, (pct) => {
       _updateVideoProgress(progressEl, pct);
     });
@@ -2244,16 +2332,17 @@ function startPollingFallback() {
 
   if (!_visibilityListenerAdded) {
     _visibilityListenerAdded = true;
+    let _lastVisibleCheck = 0;
     document.addEventListener('visibilitychange', async () => {
       if (document.visibilityState === 'visible' && state.userProfile) {
         const now = Date.now();
-        if (!startPollingFallback._lastVisible || now - startPollingFallback._lastVisible > 30000) {
+        if (!_lastVisibleCheck || now - _lastVisibleCheck > 30000) {
           invalidateCache();
           await loadDashboardData();
         }
-        startPollingFallback._lastVisible = now;
+        _lastVisibleCheck = now;
       } else {
-        startPollingFallback._lastVisible = Date.now();
+        _lastVisibleCheck = Date.now();
       }
     });
   }
@@ -2524,7 +2613,7 @@ function openFullMedia(url, isVideo = false) {
   document.body.appendChild(viewer);
 
   const close = () => {
-    if (media.tagName === 'VIDEO') media.pause();
+    if (media instanceof HTMLVideoElement) media.pause();
     viewer.remove();
   };
 
@@ -3069,6 +3158,7 @@ function initEventListeners() {
 
     try {
       await signOutUser();
+      clearUserCache(state.userProfile?.id); // don't leak this account's cached chats/dashboard
       clearOpenChat(); // never restore someone else's chat on the next login
       // Stop location sharing on sign out
       if (state.sharingLocationWith.length > 0) {
@@ -3230,6 +3320,7 @@ function initEventListeners() {
       document.getElementById('account-modal').style.display = 'none';
       showToast('Account deactivated. See you soon! 👋');
       await signOutUser();
+      clearUserCache(state.userProfile?.id);
       clearOpenChat();
       state.userProfile = null;
       state.connections = [];
@@ -3377,7 +3468,8 @@ function initEventListeners() {
     removeStatusImage();
   });
 
-  document.getElementById('status-camera-btn')?.addEventListener('click', () => {
+  document.getElementById('status-camera-btn')?.addEventListener('click', async () => {
+    const { openCamera } = await import('./camera.js');
     openCamera(
       (file) => {
         if (file.type.startsWith('video/')) {
@@ -3685,7 +3777,7 @@ function initEventListeners() {
   document.addEventListener('click', (e) => {
     const picker = document.getElementById('chat-emoji-picker');
     const btn = document.getElementById('chat-emoji-btn');
-    if (picker && !picker.contains(e.target) && e.target !== btn) {
+    if (picker && !picker.contains(/** @type {Node} */ (e.target)) && e.target !== btn) {
       picker.style.display = 'none';
     }
   });
@@ -3708,7 +3800,8 @@ function initEventListeners() {
     removeChatImage();
   });
 
-  document.getElementById('chat-camera-btn')?.addEventListener('click', () => {
+  document.getElementById('chat-camera-btn')?.addEventListener('click', async () => {
+    const { openCamera } = await import('./camera.js');
     openCamera(
       (file) => {
         if (file.type.startsWith('video/')) {
@@ -3811,6 +3904,7 @@ function initEventListeners() {
     });
     if (!confirmed) return;
 
+    clearUserCache(state.userProfile?.id);
     resetSupabaseConfig();
     state.userProfile = null;
     state.connections = [];

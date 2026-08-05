@@ -1,3 +1,4 @@
+// @ts-check
 import { createClient } from '@supabase/supabase-js';
 
 function safeLocalGet(key) {
