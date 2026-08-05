@@ -275,6 +275,10 @@ function navigateTo(viewName) {
     chat: document.getElementById('chat-view')
   };
 
+  // On desktop, hide the sidebar rail on the auth/config screens
+  const root = document.getElementById('app-root');
+  if (root) root.classList.toggle('auth-mode', viewName === 'auth' || viewName === 'config');
+
   Object.entries(views).forEach(([key, el]) => {
     if (!el) return;
     el.style.display = key === viewName ? 'flex' : 'none';
@@ -773,6 +777,15 @@ function updateMyStatusUI() {
   if (myDot) {
     myDot.className = 'online-pulse-dot';
   }
+
+  // Keep the desktop sidebar me-row in sync (rename / status updates go
+  // through this function but not through renderFriendsFeed)
+  const sAvatar = document.getElementById('sidebar-me-avatar');
+  const sName = document.getElementById('sidebar-me-name');
+  const sUsername = document.getElementById('sidebar-me-username');
+  if (sAvatar) sAvatar.textContent = state.userProfile.status_emoji || '👋';
+  if (sName) sName.textContent = state.userProfile.name || 'Me';
+  if (sUsername) sUsername.textContent = state.userProfile.username ? `@${state.userProfile.username}` : '';
 }
 
 /* ==========================================
@@ -864,6 +877,9 @@ function renderFriendsFeed() {
   const container = document.getElementById('friends-status-container');
   const counterEl = document.getElementById('connected-count');
   if (!container) return;
+
+  // Keep the desktop sidebar rail in sync (no-op when hidden on phones)
+  renderDesktopSidebar();
 
   const connected = state.connections.filter(c => c.status === 'connected');
   if (counterEl) counterEl.textContent = `${connected.length}/5`;
@@ -2819,7 +2835,89 @@ function maybeShowUsernameOnboarding() {
   openUsernameModal('onboarding');
 }
 
+/* ==========================================
+   DESKTOP SIDEBAR — wide-screen chat rail
+   ==========================================
+   Renders the friend list into #desktop-chat-list (only visible ≥900px).
+   Live-synced with the dashboard feed: unread badges, online dots,
+   active-chat highlight, and a name filter all update in place. */
+function renderDesktopSidebar() {
+  const listEl = document.getElementById('desktop-chat-list');
+  if (!listEl) return;
+
+  // Me row (bottom of the rail)
+  const meAvatar = document.getElementById('sidebar-me-avatar');
+  const meName = document.getElementById('sidebar-me-name');
+  const meUsername = document.getElementById('sidebar-me-username');
+  if (state.userProfile) {
+    if (meAvatar) meAvatar.textContent = state.userProfile.status_emoji || '👋';
+    if (meName) meName.textContent = state.userProfile.name || 'Me';
+    if (meUsername) meUsername.textContent = state.userProfile.username ? `@${state.userProfile.username}` : '';
+  }
+
+  const connected = state.connections.filter(c => c.status === 'connected');
+  if (connected.length === 0) {
+    listEl.innerHTML = `<div class="desktop-sidebar-empty">No connected friends yet.<br>Invite someone with your @username!</div>`;
+    return;
+  }
+
+  const q = (document.getElementById('sidebar-search-input')?.value || '').trim().toLowerCase();
+  const filtered = connected.filter(f =>
+    !q ||
+    (f.displayName || '').toLowerCase().includes(q) ||
+    (f.name || '').toLowerCase().includes(q) ||
+    (f.username || '').toLowerCase().includes(q)
+  );
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="desktop-sidebar-empty">No friends match “${escapeHtml(q)}”.</div>`;
+    return;
+  }
+
+  const activeId = currentChatFriend?.friendId;
+
+  listEl.innerHTML = filtered.map(f => {
+    const active = f.friendId === activeId;
+    const unread = f.unreadCount > 0 ? `<span class="desktop-chat-unread">${f.unreadCount}</span>` : '';
+    const online = isOnline(f.lastSeen);
+    const name = escapeHtml(f.displayName || f.name);
+    const preview = escapeHtml(f.statusText || 'Available');
+    const emoji = escapeHtml(f.statusEmoji || '😊');
+    const dot = online
+      ? '<span class="online-pulse-dot" style="width:10px;height:10px;bottom:-1px;right:-1px;"></span>'
+      : '';
+    return `
+      <button class="desktop-chat-row${active ? ' active' : ''}" data-friend-id="${escapeHtml(f.friendId)}">
+        <span class="desktop-chat-avatar">${emoji}${dot}</span>
+        <span class="desktop-chat-row-body">
+          <span class="desktop-chat-row-name">${name}</span>
+          <span class="desktop-chat-row-preview">${preview}</span>
+        </span>
+        ${unread}
+      </button>`;
+  }).join('');
+}
+
 function initEventListeners() {
+
+  // ---- Desktop sidebar (wide screens; element absent on phones so all
+  //      these optional-chain no-ops) ----
+  document.getElementById('desktop-chat-list')?.addEventListener('click', (e) => {
+    const row = e.target.closest('.desktop-chat-row');
+    if (!row) return;
+    const friend = state.connections.find(c => c.friendId === row.dataset.friendId && c.status === 'connected');
+    if (friend) openChat(friend);
+  });
+
+  document.getElementById('sidebar-search-input')?.addEventListener('input', renderDesktopSidebar);
+
+  document.getElementById('sidebar-update-btn')?.addEventListener('click', () => {
+    document.getElementById('btn-open-status-modal')?.click();
+  });
+
+  document.getElementById('sidebar-account-btn')?.addEventListener('click', () => {
+    document.getElementById('btn-account')?.click();
+  });
 
   // Tap a DM notification toast → open that chat
   document.getElementById('global-toast')?.addEventListener('click', () => {

@@ -30,7 +30,33 @@
 <body>
 
   <div id="app-root">
-    
+
+    <!-- ==========================================
+         0. DESKTOP SIDEBAR — wide-screen rail (hidden on phones)
+         ========================================== -->
+    <div id="desktop-sidebar">
+      <div class="desktop-sidebar-head">
+        <div class="logo-container">
+          <img src="/logo.svg" alt="Pulse Logo" class="logo-img">
+          <h1 class="app-title">Pulse</h1>
+        </div>
+        <button id="sidebar-update-btn" class="btn btn-small btn-primary" title="Update status"><svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+      </div>
+      <div class="desktop-sidebar-search">
+        <span class="desktop-sidebar-search-icon"><svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg></span>
+        <input id="sidebar-search-input" class="desktop-sidebar-search-input" type="search" placeholder="Search friends…" autocomplete="off" enterkeyhint="search">
+      </div>
+      <div id="desktop-chat-list" class="desktop-chat-list"></div>
+      <div class="desktop-sidebar-me" id="desktop-sidebar-me">
+        <span id="sidebar-me-avatar" class="desktop-me-avatar">👋</span>
+        <div class="desktop-me-info">
+          <span id="sidebar-me-name" class="desktop-me-name">Me</span>
+          <span id="sidebar-me-username" class="desktop-me-username">@username</span>
+        </div>
+        <button id="sidebar-account-btn" class="btn btn-small btn-secondary" title="Account settings"><svg class="icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+      </div>
+    </div>
+
     <!-- ==========================================
          1. CONFIGURATION VIEW
          ========================================== -->
@@ -210,7 +236,7 @@
         </div>
 
         <!-- Friends Feed -->
-        <div style="display: flex; flex-direction: column; gap: 10px;">
+        <div class="friends-feed-section" style="display: flex; flex-direction: column; gap: 10px;">
           <h2 class="section-title">
             <span>Friends Updates</span>
             <span id="connected-count" class="section-count">0/5</span>
@@ -224,7 +250,7 @@
         </div>
 
         <!-- Connections Manager -->
-        <div class="glass-card" style="margin-top: 8px;">
+        <div class="glass-card connections-card" style="margin-top: 8px;">
           <h3 class="section-title" style="font-size:16px;margin-bottom:12px;">
             Connect with Friends
           </h3>
@@ -249,7 +275,7 @@
         </div>
 
         <!-- Status History -->
-        <div class="glass-card" style="margin-top: 4px;">
+        <div class="glass-card history-card" style="margin-top: 4px;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
             <h3 class="section-title" style="font-size:16px;">Friends' Status History <span style="font-size:12px;font-weight:500;color:hsl(var(--text-muted));">(last 5)</span></h3>
             <button id="btn-refresh" class="btn btn-secondary btn-small" style="padding: 6px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
