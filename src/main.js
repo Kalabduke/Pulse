@@ -301,6 +301,9 @@ async function checkNavigationState() {
       navigateTo('dashboard');
       invalidateCache();
       await loadDashboardData();
+      // Refresh keeps you in the chat you had open instead of dumping you
+      // back on the dashboard
+      restoreOpenChatFromStorage();
       setupRealtimeSync();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
@@ -508,12 +511,24 @@ async function setupRealtimeSync() {
       setupRealtimeSync();
     } else if (change.type === 'new_message') {
       const msg = change.record;
-      if (currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
-        // Chat is open → append the bubble in place, mark delivered + read
+      // Dedup: realtime can redeliver the same INSERT after a reconnect — a
+      // duplicate would double-bump the unread badge. Same pattern as status
+      // updates (state._rtDedup, 5s window).
+      if (msg?.id) {
+        if (!state._rtMsgDedup) state._rtMsgDedup = {};
+        const now = Date.now();
+        if (state._rtMsgDedup[msg.id] && now - state._rtMsgDedup[msg.id] < 5000) return;
+        state._rtMsgDedup[msg.id] = now;
+      }
+      const isSelf = msg.sender_id === state.userProfile?.id;
+      if (!isSelf && currentChatFriend && msg.sender_id === currentChatFriend.friendId) {
+        // Chat is open → append the bubble in place, mark delivered + read.
+        // Idempotent: my own send's echo is deduped by appendChatMessage's
+        // cache guard, so it can't double-append even if it races the send.
         appendChatMessage(msg);
         markMessagesAsDelivered(currentChatFriend.friendId).catch(() => {});
         markMessagesAsRead(currentChatFriend.friendId).catch(() => {});
-      } else {
+      } else if (!isSelf) {
         // In-app DM notification — sender name + preview, tap to open the chat
         const sender = (state.connections || []).find(c => c.friendId === msg.sender_id);
         const senderName = sender?.displayName || sender?.name || 'A friend';
@@ -524,8 +539,16 @@ async function setupRealtimeSync() {
         showDmToast(msg.sender_id, `${senderEmoji} ${senderName}`, preview);
         // Device received it → sender gets a ✓✓ delivered receipt immediately
         if (msg.sender_id) markMessagesAsDelivered(msg.sender_id).catch(() => {});
-        invalidateCache();
-        await loadDashboardData();
+        // Live unread badge — bump the sender's count in place and re-render
+        // just the feed, instead of a full dashboard reload per message.
+        if (sender) {
+          sender.unreadCount = (sender.unreadCount || 0) + 1;
+          renderFriendsFeed();
+        } else {
+          // Sender isn't in our list yet — fall back to a fresh load
+          invalidateCache();
+          await loadDashboardData();
+        }
       }
     } else if (change.type === 'message_updated') {
       // Read/delivered receipt or reaction → patch just that bubble, no reload
@@ -1173,8 +1196,46 @@ function handleTypingEvent(record, eventType) {
   friendTypingTimer = setTimeout(hideTypingIndicator, 3000);
 }
 
+/* ==========================================
+   OPEN-CHAT PERSISTENCE — survive page refresh (same tab)
+   ========================================== */
+const OPEN_CHAT_KEY = 'pulse_open_chat';
+
+function saveOpenChat(friend) {
+  try {
+    sessionStorage.setItem(OPEN_CHAT_KEY, JSON.stringify({
+      friendId: friend.friendId,
+      at: Date.now()
+    }));
+  } catch { /* storage unavailable — refresh just lands on dashboard */ }
+}
+
+function clearOpenChat() {
+  try { sessionStorage.removeItem(OPEN_CHAT_KEY); } catch { /* ignore */ }
+}
+
+// After connections load on boot, re-open the chat that was open before refresh
+function restoreOpenChatFromStorage() {
+  if (new URLSearchParams(_savedSearch).has('chat')) return; // deep link wins
+  try {
+    const raw = sessionStorage.getItem(OPEN_CHAT_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved?.friendId) return;
+    const friend = state.connections.find(
+      c => c.friendId === saved.friendId && c.status === 'connected'
+    );
+    if (friend) {
+      openChat(friend);
+    } else {
+      clearOpenChat(); // friend gone or disconnected — drop the stale entry
+    }
+  } catch { /* malformed storage — ignore */ }
+}
+
 async function openChat(friend) {
   currentChatFriend = friend;
+  saveOpenChat(friend);
   chatMessageLimit = 50;
   chatPagingUp = false;
   chatMessagesCache = {};
@@ -1231,15 +1292,16 @@ function formatChatDay(date) {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-async function loadChatMessages(friendId, limit = chatMessageLimit) {
+async function loadChatMessages(friendId, limit = chatMessageLimit, keepScroll = false) {
   const container = document.getElementById('chat-messages');
   if (!container) return;
 
   // Re-render destroys any open reaction picker — drop the stale reference
   closeReactPicker();
 
-  // Preserve scroll when paging up (loading earlier messages) — NOT on regular reloads
-  const wasPaging = chatPagingUp;
+  // Preserve scroll when paging up (loading earlier messages) or when a
+  // background poll refresh must not yank the user away from what they're reading
+  const wasPaging = chatPagingUp || keepScroll;
   const prevHeight = container.scrollHeight;
   const prevScrollTop = container.scrollTop;
 
@@ -1435,6 +1497,11 @@ function patchReactionsOnly(msgId, reactions) {
 function appendChatMessage(msg) {
   const container = document.getElementById('chat-messages');
   if (!container || !currentChatFriend) return;
+  if (!msg?.id) return;
+
+  // Dedup — the widened realtime INSERT filter now echoes my own sends back,
+  // so guard against double-appending a message already in the DOM/cache.
+  if (chatMessagesCache[msg.id]) return;
 
   const myId = state.userProfile?.id;
   if (!myId) return;
@@ -1758,7 +1825,12 @@ async function sendChatMessage() {
       }
     }
 
-    await sendDirectMessage(currentChatFriend.friendId, text, imageUrl, replyToId);
+    // Capture the reply preview BEFORE clearReply() nulls currentReplyTo
+    const replyTo = currentReplyTo
+      ? { id: currentReplyTo.id, content_text: currentReplyTo.content_text, image_url: currentReplyTo.image_url, sender_id: currentReplyTo.sender_id }
+      : null;
+
+    const sentMsg = await sendDirectMessage(currentChatFriend.friendId, text, imageUrl, replyToId);
     if (input) input.value = '';
     removeChatImage();
     clearReply();
@@ -1773,7 +1845,16 @@ async function sendChatMessage() {
       text || '',
       imageUrl
     );
-    await loadChatMessages(currentChatFriend.friendId);
+    // Real-time: append my sent message in place (no full chat reload). The
+    // realtime INSERT echo of my own send (same real id) is deduped by
+    // appendChatMessage, and the friend's delivered/read receipt arrives as
+    // message_updated → the ✓ / ✓✓ / read ticks update live.
+    if (state.realtimeChannel?.state === 'joined') {
+      appendChatMessage({ ...sentMsg, reply: replyTo });
+    } else {
+      // Realtime is down — fall back to a fresh fetch so the message still shows
+      await loadChatMessages(currentChatFriend.friendId);
+    }
   } catch (err) {
     showToast(err.message || 'Failed to send', 'error');
   } finally {
@@ -2137,6 +2218,11 @@ function startPollingFallback() {
     if (channelStatus !== 'joined') {
       invalidateCache(); // fallback poll must always fetch fresh data
       await loadDashboardData();
+      // Realtime is down — keep the open chat live too (incoming messages +
+      // the ✓/✓✓/read receipt ticks) without resetting the user's scroll.
+      if (currentChatFriend) {
+        loadChatMessages(currentChatFriend.friendId, chatMessageLimit, true).catch(() => {});
+      }
     }
   }, isIOS ? 20000 : 45000);
 
@@ -2887,6 +2973,7 @@ function initEventListeners() {
 
     try {
       await signOutUser();
+      clearOpenChat(); // never restore someone else's chat on the next login
       // Stop location sharing on sign out
       if (state.sharingLocationWith.length > 0) {
         await stopLocationShare(null).catch(() => {});
@@ -3045,6 +3132,7 @@ function initEventListeners() {
       document.getElementById('account-modal').style.display = 'none';
       showToast('Account deactivated. See you soon! 👋');
       await signOutUser();
+      clearOpenChat();
       state.userProfile = null;
       state.connections = [];
       if (state.realtimeChannel) { state.realtimeChannel.unsubscribe(); state.realtimeChannel = null; }
@@ -3551,6 +3639,7 @@ function initEventListeners() {
     closeReactPicker();
     closeChatSearch();
     chatMessagesCache = {};
+    clearOpenChat(); // leaving the chat — a refresh should land on the dashboard
     currentChatFriend = null;
     clearReply();
     const picker = document.getElementById('chat-emoji-picker');

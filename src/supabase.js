@@ -1156,7 +1156,7 @@ export function subscribeToPulseSync(userId, callback, friendIds = []) {
     )
     .on(
       'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` },
+      { event: 'INSERT', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
       (payload) => {
         callback({ type: 'new_message', record: payload.new });
       }
