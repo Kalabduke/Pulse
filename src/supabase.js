@@ -1154,78 +1154,60 @@ export function subscribeToPulseSync(userId, callback, friendIds = []) {
   // every user's heartbeat floods every client's channel (free-tier realtime dies).
   const profileIds = friendIds.length ? [userId, ...friendIds] : [userId];
 
-  return client()
-    .channel(`pulse-sync-${userId}`)
-    .on(
-      'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=in.(${profileIds.join(',')})` },
-      (payload) => {
-        callback({ type: 'profile_updated', record: payload.new });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'connections', filter: `or=(user_id=eq.${userId},friend_id=eq.${userId})` },
-      (payload) => {
-        callback({
-          type: 'connection_changed',
-          event: payload.eventType,
-          record: payload.new || payload.old
-        });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: 'INSERT', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
-      (payload) => {
-        callback({ type: 'new_message', record: payload.new });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: 'UPDATE', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
-      (payload) => {
-        // Read/delivered receipts + reactions on messages I sent OR received —
-        // the client patches the bubble in place (no full chat reload)
-        callback({ type: 'message_updated', record: payload.new });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: 'DELETE', schema: 'public', table: 'messages', filter: `or=(sender_id=eq.${userId},recipient_id=eq.${userId})` },
-      (payload) => {
-        // A message in one of my conversations was deleted — remove it in place
-        callback({ type: 'message_deleted', record: payload.old });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'private_statuses', filter: `to_user_id=eq.${userId}` },
-      (payload) => {
-        callback({ type: 'private_status_updated', record: payload.new });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'location_shares', filter: `to_user_id=eq.${userId}` },
-      (payload) => {
-        callback({ type: 'location_updated', record: payload.new });
-      }
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'typing_statuses', filter: `to_user_id=eq.${userId}` },
-      (payload) => {
-        callback({
-          type: 'typing_updated',
-          eventType: payload.eventType,
-          record: payload.new || payload.old
-        });
-      }
-    )
-    .subscribe((status) => {
-      console.log('[Pulse] Realtime channel status:', status);
-    });
+  const channel = client().channel(`pulse-sync-${userId}`);
+
+  // NOTE: or=(colA=eq.X,colB=eq.X) realtime filters SILENTLY deliver nothing on
+  // some Supabase realtime versions (verified live: channel SUBSCRIBES, zero
+  // events). The reliable form is ONE handler per column — so each subscription
+  // below is split into sender/user + recipient/friend handlers. This is what
+  // makes messages, receipts, reactions, deletions and connections arrive live.
+
+  // Profile updates (id=in.() is a simple filter — works fine)
+  channel.on(
+    'postgres_changes',
+    { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=in.(${profileIds.join(',')})` },
+    (payload) => {
+      callback({ type: 'profile_updated', record: payload.new });
+    }
+  );
+
+  // Connections — one handler per direction
+  const onConnection = (payload) => {
+    callback({ type: 'connection_changed', event: payload.eventType, record: payload.new || payload.old });
+  };
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'connections', filter: `user_id=eq.${userId}` }, onConnection);
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'connections', filter: `friend_id=eq.${userId}` }, onConnection);
+
+  // Messages INSERT — I'm the sender OR the recipient
+  const onNewMessage = (payload) => callback({ type: 'new_message', record: payload.new });
+  channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, onNewMessage);
+  channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` }, onNewMessage);
+
+  // Messages UPDATE — read/delivered receipts + reactions (patch bubble in place)
+  const onMessageUpdated = (payload) => callback({ type: 'message_updated', record: payload.new });
+  channel.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, onMessageUpdated);
+  channel.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` }, onMessageUpdated);
+
+  // Messages DELETE — removed in place (REPLICA IDENTITY FULL keeps payload.old complete)
+  const onMessageDeleted = (payload) => callback({ type: 'message_deleted', record: payload.old });
+  channel.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages', filter: `sender_id=eq.${userId}` }, onMessageDeleted);
+  channel.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages', filter: `recipient_id=eq.${userId}` }, onMessageDeleted);
+
+  // Statuses/shares/typing — simple single-column filters (already work)
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'private_statuses', filter: `to_user_id=eq.${userId}` }, (payload) => {
+    callback({ type: 'private_status_updated', record: payload.new });
+  });
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'location_shares', filter: `to_user_id=eq.${userId}` }, (payload) => {
+    callback({ type: 'location_updated', record: payload.new });
+  });
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'typing_statuses', filter: `to_user_id=eq.${userId}` }, (payload) => {
+    callback({ type: 'typing_updated', eventType: payload.eventType, record: payload.new || payload.old });
+  });
+
+  channel.subscribe((status) => {
+    console.log('[Pulse] Realtime channel status:', status);
+  });
+  return channel;
 }
 
 /* ==========================================
