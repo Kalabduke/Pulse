@@ -894,6 +894,25 @@ export async function fetchDirectMessages(friendId, limit = 50) {
   return (data || []).reverse();
 }
 
+// Lightweight receipt/reaction sync — fetches ONLY the columns the open-chat
+// sync needs (id, sender/recipient, reactions, read/delivered/created) instead
+// of full rows with the reply join. Makes the fast 3s poll cheap on the free tier.
+export async function fetchReceiptState(friendId, limit = 50) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const { data, error } = await client()
+    .from('messages')
+    .select('id, sender_id, recipient_id, reactions, read_at, delivered_at, created_at')
+    .or(`and(sender_id.eq.${user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${user.id})`)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  // Return in ascending order so messages[0] is the oldest of the window
+  return (data || []).reverse();
+}
+
 export async function markMessagesAsRead(friendId) {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');

@@ -32,6 +32,7 @@ import {
   uploadStatusImage,
   sendDirectMessage,
   fetchDirectMessages,
+  fetchReceiptState,
   markMessagesAsRead,
   markMessagesAsDelivered,
   toggleMessageReaction,
@@ -1341,57 +1342,81 @@ let receiptSyncTimer = null;
 let receiptSyncing = false;
 let friendTypingAt = 0; // last typing ping timestamp (for stale-indicator fallback)
 
+// One pass of the receipt-sync net. Dedup-guarded so overlapping calls
+// (interval tick + instant trigger) never double-fetch.
+async function runReceiptSync(friendId) {
+  // Chat closed, switched, or signed out — stop syncing
+  if (!state.userProfile || !currentChatFriend || currentChatFriend.friendId !== friendId) {
+    stopReceiptSync();
+    return;
+  }
+  if (receiptSyncing) return; // previous fetch still in flight — skip this tick
+  receiptSyncing = true;
+  try {
+    // Cover everything loaded in the open chat (grows with paging), not just
+    // the newest 30 — receipts often change in bulk when the other person opens
+    // the chat. Lightweight query: only receipt/reaction columns, no reply join,
+    // so the fast 3s poll stays cheap.
+    let fetched;
+    try {
+      fetched = await fetchReceiptState(friendId, Math.max(chatMessageLimit, 30));
+    } catch (e) {
+      // Legacy DB without the receipt columns — fall back to the full query
+      // rather than silently skipping the sync.
+      fetched = await fetchDirectMessages(friendId, Math.max(chatMessageLimit, 30));
+    }
+
+    // 1) Receipts + reactions — patch in place. patchMessageBubble is a no-op
+    //    when nothing visible changed, so this only re-renders what updated.
+    fetched.forEach(msg => patchMessageBubble(msg));
+
+    // 2) Deletions — anything still cached that sits inside the fetched window
+    //    but is missing from the server was deleted; remove it in place (a
+    //    fallback for the realtime DELETE event). Boundary guard: a cached row
+    //    OLDER than the oldest fetched row is just outside the page window,
+    //    not necessarily deleted — never touch it. Skipped while paging up,
+    //    because the cache is mid-rebuild then.
+    if (!chatPagingUp) {
+      const fetchedIds = new Set(fetched.map(m => m.id));
+      const oldestFetched = fetched.length ? new Date(fetched[0].created_at).getTime() : Infinity;
+      Object.keys(chatMessagesCache).forEach(id => {
+        const cached = chatMessagesCache[id];
+        if (!cached) return;
+        const ts = new Date(cached.created_at).getTime();
+        if (!fetchedIds.has(id) && ts >= oldestFetched) removeChatMessageRow(id);
+      });
+    }
+
+    // 3) Typing-off — if the indicator is up but no typing ping has arrived
+    //    for a while (the realtime DELETE was dropped), hide it. The in-app
+    //    timer still handles the fast path; this is the belt-and-braces net.
+    const typingEl = document.getElementById('chat-typing-indicator');
+    if (typingEl && typingEl.style.display !== 'none' && Date.now() - friendTypingAt > 4000) {
+      hideTypingIndicator();
+    }
+  } catch { /* transient network hiccup — retry next tick */ }
+  finally {
+    receiptSyncing = false;
+  }
+}
+
 function startReceiptSync(friendId) {
   stopReceiptSync();
-  const sync = async () => {
-    // Chat closed, switched, or signed out — stop syncing
-    if (!state.userProfile || !currentChatFriend || currentChatFriend.friendId !== friendId) {
-      stopReceiptSync();
-      return;
-    }
-    if (receiptSyncing) return; // previous fetch still in flight — skip this tick
-    receiptSyncing = true;
-    try {
-      // Cover everything loaded in the open chat (grows with paging), not just
-      // the newest 30 — receipts often change in bulk when the other person opens
-      // the chat.
-      const fetched = await fetchDirectMessages(friendId, Math.max(chatMessageLimit, 30));
+  runReceiptSync(friendId);
+  // Telegram-style responsiveness: realtime is the instant path; this ~3s
+  // fallback only matters when realtime UPDATE/DELETE events are dropped.
+  // Skipped while the tab is hidden — the focus trigger syncs on return.
+  receiptSyncTimer = setInterval(() => {
+    if (document.hidden) return;
+    runReceiptSync(friendId);
+  }, 3000);
+}
 
-      // 1) Receipts + reactions — patch in place. patchMessageBubble is a no-op
-      //    when nothing visible changed, so this only re-renders what updated.
-      fetched.forEach(msg => patchMessageBubble(msg));
-
-      // 2) Deletions — anything still cached that sits inside the fetched window
-      //    but is missing from the server was deleted; remove it in place (a
-      //    fallback for the realtime DELETE event). Boundary guard: a cached row
-      //    OLDER than the oldest fetched row is just outside the page window,
-      //    not necessarily deleted — never touch it. Skipped while paging up,
-      //    because the cache is mid-rebuild then.
-      if (!chatPagingUp) {
-        const fetchedIds = new Set(fetched.map(m => m.id));
-        const oldestFetched = fetched.length ? new Date(fetched[0].created_at).getTime() : Infinity;
-        Object.keys(chatMessagesCache).forEach(id => {
-          const cached = chatMessagesCache[id];
-          if (!cached) return;
-          const ts = new Date(cached.created_at).getTime();
-          if (!fetchedIds.has(id) && ts >= oldestFetched) removeChatMessageRow(id);
-        });
-      }
-
-      // 3) Typing-off — if the indicator is up but no typing ping has arrived
-      //    for a while (the realtime DELETE was dropped), hide it. The in-app
-      //    timer still handles the fast path; this is the belt-and-braces net.
-      const typingEl = document.getElementById('chat-typing-indicator');
-      if (typingEl && typingEl.style.display !== 'none' && Date.now() - friendTypingAt > 4000) {
-        hideTypingIndicator();
-      }
-    } catch { /* transient network hiccup — retry next tick */ }
-    finally {
-      receiptSyncing = false;
-    }
-  };
-  sync();
-  receiptSyncTimer = setInterval(sync, 10000);
+// Fire one sync pass immediately — used on tab-focus, after sending, and after
+// reacting, so the open chat feels realtime even without the push channel.
+function receiptSyncNow() {
+  if (!currentChatFriend) return;
+  runReceiptSync(currentChatFriend.friendId);
 }
 
 function stopReceiptSync() {
@@ -1753,6 +1778,8 @@ async function toggleReaction(msgId, emoji) {
     updated.reactions = result;
     chatMessagesCache[msgId] = updated;
     patchReactionsOnly(msgId, result);
+    // Instant sync — reconcile the friend's reactions/read state right away.
+    receiptSyncNow();
   } else {
     // RPC failed (e.g. SQL not deployed yet) — revert the optimistic flip
     cached.reactions = original;
@@ -2468,6 +2495,9 @@ function startPollingFallback() {
           await loadDashboardData();
         }
         _lastVisibleCheck = now;
+        // Coming back to the tab — sync the open chat instantly (Telegram-style
+        // "seen" feel even without the push channel).
+        if (currentChatFriend) receiptSyncNow();
       } else {
         _lastVisibleCheck = Date.now();
       }
