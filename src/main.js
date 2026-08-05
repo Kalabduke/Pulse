@@ -309,12 +309,39 @@ async function checkNavigationState() {
         reactivateAccount().catch(() => {});
         state.userProfile = { ...state.userProfile, deactivated_at: null };
       }
-      navigateTo('dashboard');
       invalidateCache();
-      await loadDashboardData();
-      // Refresh keeps you in the chat you had open instead of dumping you
-      // back on the dashboard
-      restoreOpenChatFromStorage();
+      // Refresh keeps you IN the chat you had open — peek at the stored chat
+      // BEFORE rendering the dashboard so there's no dashboard flash-then-jump.
+      // The dashboard still loads quietly in the background, so going back is
+      // instant and nothing is stale.
+      const pendingChatId = peekOpenChatFriendId();
+      if (pendingChatId) {
+        // Load connections first so openChat has a full friend object
+        try {
+          const connections = await fetchConnections();
+          state.connections = connections;
+          setCachedConnections(connections);
+          const friend = connections.find(c => c.friendId === pendingChatId && c.status === 'connected');
+          if (friend) {
+            await openChat(friend);
+            // Dashboard data loads in the background — back button is instant
+            loadDashboardData();
+          } else {
+            clearOpenChat(); // friend gone or disconnected — drop the stale entry
+            navigateTo('dashboard');
+            await loadDashboardData();
+          }
+        } catch {
+          // openChat may have half-run (e.g. loadChatMessages failed) — clear
+          // the stale reference so realtime doesn't append into a hidden chat
+          currentChatFriend = null;
+          navigateTo('dashboard');
+          await loadDashboardData();
+        }
+      } else {
+        navigateTo('dashboard');
+        await loadDashboardData();
+      }
       setupRealtimeSync();
       startPollingFallback();
       setTimeout(requestNotificationPermission, 3000);
@@ -1261,16 +1288,26 @@ function clearOpenChat() {
   try { sessionStorage.removeItem(OPEN_CHAT_KEY); } catch { /* ignore */ }
 }
 
-// After connections load on boot, re-open the chat that was open before refresh
-function restoreOpenChatFromStorage() {
-  if (new URLSearchParams(_savedSearch).has('chat')) return; // deep link wins
+// Peek at the session's open chat (set by saveOpenChat) WITHOUT opening it —
+// used at boot to decide whether to render the dashboard first. A ?chat= deep
+// link wins over the stored session, same as restoreOpenChatFromStorage.
+function peekOpenChatFriendId() {
+  if (new URLSearchParams(_savedSearch).has('chat')) return null; // deep link wins
   try {
     const raw = sessionStorage.getItem(OPEN_CHAT_KEY);
-    if (!raw) return;
+    if (!raw) return null;
     const saved = JSON.parse(raw);
-    if (!saved?.friendId) return;
+    return saved?.friendId || null;
+  } catch { return null; }
+}
+
+// After connections load on boot, re-open the chat that was open before refresh
+function restoreOpenChatFromStorage() {
+  try {
+    const saved = peekOpenChatFriendId();
+    if (!saved) return;
     const friend = state.connections.find(
-      c => c.friendId === saved.friendId && c.status === 'connected'
+      c => c.friendId === saved && c.status === 'connected'
     );
     if (friend) {
       openChat(friend);
