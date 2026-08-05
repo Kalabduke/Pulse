@@ -1965,16 +1965,51 @@ async function sendChatMessage() {
     // real id) is deduped by appendChatMessage's cache guard, so it can't
     // double-append. No channel-state gate: supabase-js v2 reports 'subscribed',
     // not 'joined', and the old gate made sent messages invisible until refresh.
-    // If the append bailed (missing container, stale context), fall back to a
-    // fresh fetch so the sent message still renders.
-    if (!appendChatMessage({ ...sentMsg, reply: replyTo })) {
+    // GUARANTEED VISIBILITY: if the append bailed (missing container, render
+    // error) OR anything wiped the bubble afterward (racing loadChatMessages
+    // re-render, realtime churn), we force a fresh fetch so the sent message
+    // always shows — never "invisible until refresh".
+    if (!safeAppendChatMessage({ ...sentMsg, reply: replyTo })) {
       await loadChatMessages(currentChatFriend.friendId);
+    } else {
+      ensureSentMessageVisible(sentMsg.id, currentChatFriend.friendId);
     }
   } catch (err) {
+    // The insert may have committed even though this round-trip threw —
+    // reconcile so the sent message still appears without a manual refresh.
     showToast(err.message || 'Failed to send', 'error');
+    if (currentChatFriend) {
+      loadChatMessages(currentChatFriend.friendId).catch(() => {});
+    }
   } finally {
     sendBtn.disabled = false;
   }
+}
+
+// Append the sent message without letting a render error silently lose it.
+// Returns true only when the bubble is actually present in the DOM.
+function safeAppendChatMessage(msg) {
+  try {
+    if (!appendChatMessage(msg)) return false;
+    return !!document.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msg.id)}"]`);
+  } catch (err) {
+    console.warn('[Pulse] Optimistic append failed — will re-fetch:', err);
+    return false;
+  }
+}
+
+// Self-healing watchdog: if the sent bubble isn't visible shortly after send
+// (e.g. a racing loadChatMessages re-render wiped it), reload the chat so the
+// message appears without the user having to refresh.
+function ensureSentMessageVisible(msgId, friendId) {
+  if (!msgId || !friendId) return;
+  setTimeout(() => {
+    if (!currentChatFriend || currentChatFriend.friendId !== friendId) return; // left chat
+    const bubble = document.querySelector(`.chat-bubble[data-msg-id="${CSS.escape(msgId)}"]`);
+    if (!bubble) {
+      loadChatMessages(friendId).catch(() => {});
+    }
+  }, 700);
 }
 
 function removeChatImage() {
