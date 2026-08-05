@@ -1377,7 +1377,20 @@ async function loadChatMessages(friendId, limit = chatMessageLimit, keepScroll =
   if (!paintedFromCache) container.innerHTML = '<div class="spinner" style="margin:auto;"></div>';
 
   try {
-    const messages = await fetchDirectMessages(friendId, limit);
+    const fetched = await fetchDirectMessages(friendId, limit);
+
+    // Merge in any messages that arrived while the fetch was in flight
+    // (optimistic sends, realtime echoes). The DB query was snapshotted
+    // before those rows existed, so a plain re-render would silently drop
+    // a just-sent message until the next refresh.
+    const merged = new Map();
+    fetched.forEach(m => merged.set(m.id, m));
+    Object.values(chatMessagesCache).forEach(m => {
+      if (m?.id && !merged.has(m.id)) merged.set(m.id, m);
+    });
+    const messages = [...merged.values()].sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
 
     if (messages.length === 0) {
       chatMessagesCache = {};
@@ -1597,7 +1610,9 @@ function appendChatMessage(msg) {
 
   // Dedup — the widened realtime INSERT filter now echoes my own sends back,
   // so guard against double-appending a message already in the DOM/cache.
-  if (chatMessagesCache[msg.id]) return;
+  // Return true: the bubble is already displayed, so callers must NOT treat
+  // this as a bail (a full re-fetch here would wipe the fresh bubble).
+  if (chatMessagesCache[msg.id]) return true;
 
   const myId = state.userProfile?.id;
   if (!myId) return;
@@ -2319,7 +2334,10 @@ function startPollingFallback() {
 
   state.pollInterval = setInterval(async () => {
     const channelStatus = state.realtimeChannel?.state;
-    if (channelStatus !== 'joined') {
+    // supabase-js v2 reports 'subscribed' on a live channel (never 'joined'),
+    // so only fall back to polling when realtime is genuinely down. This also
+    // stops the poll from re-rendering the open chat every 20-45s.
+    if (channelStatus !== 'subscribed' && channelStatus !== 'joined') {
       invalidateCache(); // fallback poll must always fetch fresh data
       await loadDashboardData();
       // Realtime is down — keep the open chat live too (incoming messages +
