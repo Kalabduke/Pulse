@@ -1,10 +1,30 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import webpush from 'npm:web-push@3.6.7';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+// CORS: echo the request origin ONLY when it's a known Pulse front-end.
+// Native apps (Capacitor) send no Origin header, so those requests still
+// work — browser callers from unknown origins get no ACAO header and their
+// browser blocks the response (previously this was * which is wide open).
+const ALLOWED_ORIGINS = [
+  'https://pulse-gray-eight.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'capacitor://localhost',
+  'https://localhost'
+];
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') || '';
+  const headers: Record<string, string> = {
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS'
+  };
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+    headers['Vary'] = 'Origin';
+  }
+  return headers;
+}
 
 // Generate a JWT for Firebase service account authentication
 async function getFirebaseAccessToken(serviceAccount: any): Promise<string> {
@@ -64,7 +84,7 @@ async function getFirebaseAccessToken(serviceAccount: any): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req) });
   }
 
   try {
@@ -77,7 +97,7 @@ Deno.serve(async (req) => {
     if (!authHeader.startsWith('Bearer ')) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
       });
     }
 
@@ -89,7 +109,7 @@ Deno.serve(async (req) => {
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
       });
     }
 
@@ -105,7 +125,7 @@ Deno.serve(async (req) => {
       if (!recipientId || recipientId === user.id) {
         return new Response(JSON.stringify({ error: 'recipientId required and must differ from the caller' }), {
           status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -119,7 +139,7 @@ Deno.serve(async (req) => {
       if (!conn || conn.length === 0) {
         return new Response(JSON.stringify({ error: 'Users are not connected' }), {
           status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
       friendIds = [recipientId];
@@ -128,7 +148,7 @@ Deno.serve(async (req) => {
       if (!userId || userId !== user.id) {
         return new Response(JSON.stringify({ error: 'userId must match the authenticated user' }), {
           status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
         });
       }
 
@@ -147,7 +167,31 @@ Deno.serve(async (req) => {
 
     if (friendIds.length === 0) {
       return new Response(JSON.stringify({ sent: 0, reason: 'no friends' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
+      });
+    }
+
+    // ---- 2.5 Per-sender push cooldown (anti-spam) ----
+    // A scripted user can't hammer a friend's phone with pushes: each
+    // (sender → recipient) pair may only push once per window. Backed by the
+    // acquire_push_slot RPC + push_cooldowns table (idempotent, fails open if
+    // the RPC isn't deployed yet so pushes never break).
+    const remaining: string[] = [];
+    for (const fid of friendIds) {
+      try {
+        const { data: ok, error: slotErr } = await userClient.rpc('acquire_push_slot', {
+          recipient: fid,
+          window_seconds: 10
+        });
+        if (!slotErr && ok === false) continue; // throttled — skip this friend
+      } catch { /* RPC missing — don't rate limit */ }
+      remaining.push(fid);
+    }
+    friendIds = remaining;
+
+    if (friendIds.length === 0) {
+      return new Response(JSON.stringify({ sent: 0, reason: 'rate_limited' }), {
+        headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
       });
     }
 
@@ -293,13 +337,13 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ sent, total: tokenTotal, webSent, errors }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
     });
 
   } catch (err: any) {
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      headers: { ...corsHeaders(req), 'Content-Type': 'application/json' }
     });
   }
 });

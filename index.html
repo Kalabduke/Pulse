@@ -17,8 +17,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="dns-prefetch" href="https://hrbophzmwuhmzylbjuge.supabase.co">
 
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap"></noscript>
+  <!-- CSP blocks inline onload handlers, so the async font trick is replaced
+       by a plain stylesheet link (fonts load with the page). -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap">
   
   <link rel="stylesheet" href="./src/style.css">
   <link rel="apple-touch-icon" href="/icon-192.png">
@@ -319,7 +320,7 @@
         <!-- Reply bar — shown when replying to a message -->
         <div id="chat-reply-bar" style="display:none;" class="chat-reply-bar">
           <span id="chat-reply-bar-text" class="chat-reply-bar-text"></span>
-          <button id="chat-reply-cancel" class="chat-reply-cancel" onclick="clearReply()">✕</button>
+          <button id="chat-reply-cancel" class="chat-reply-cancel" type="button">✕</button>
         </div>
         <!-- Chat emoji picker popup -->
         <div id="chat-emoji-picker" class="chat-emoji-picker" style="display:none;">

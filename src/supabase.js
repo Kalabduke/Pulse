@@ -282,8 +282,9 @@ export async function isUsernameTaken(username) {
     const { data, error } = await client().rpc('username_taken', { candidate: clean });
     if (!error && typeof data === 'boolean') return data;
   } catch { /* RPC missing — fall through */ }
+  // RLS: strangers can't read profiles directly — use the public directory view
   const { data: rows } = await client()
-    .from('profiles')
+    .from('profiles_public')
     .select('id')
     .ilike('username', clean)
     .limit(1);
@@ -300,8 +301,9 @@ export async function findByUsername(candidate) {
     if (!error && data && data.length > 0) return data[0];
     if (!error) return null;
   } catch { /* RPC missing — fall through */ }
+  // RLS: strangers can't read profiles directly — use the public directory view
   const { data } = await client()
-    .from('profiles')
+    .from('profiles_public')
     .select('id, name, username')
     .ilike('username', clean)
     .limit(1);
@@ -585,9 +587,10 @@ export async function sendConnectionRequest(friendIdOrName) {
   let friendProfile = null;
 
   // 1) Exact UUID (legacy Pulse IDs still work)
+  //    Uses profiles_public — RLS now blocks reading strangers' full profiles
   if (uuidRegex.test(query)) {
     const { data } = await client()
-      .from('profiles')
+      .from('profiles_public')
       .select('id, name, username')
       .eq('id', query)
       .limit(1);
@@ -599,10 +602,11 @@ export async function sendConnectionRequest(friendIdOrName) {
     friendProfile = await findByUsername(query);
   }
 
-  // 3) Fallback: display-name search
+  // 3) Fallback: display-name search (via the public directory view — RLS
+  //    blocks direct reads of strangers' profiles)
   if (!friendProfile) {
     const { data } = await client()
-      .from('profiles')
+      .from('profiles_public')
       .select('id, name, username')
       .ilike('name', `%${query}%`)
       .limit(1);

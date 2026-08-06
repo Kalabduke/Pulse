@@ -979,7 +979,7 @@ function renderFriendsFeed() {
       ? `<div class="private-sent-preview">
            <span>📤 You sent privately:</span>
            <span>${escapeHtml(sentByMe.status_emoji)} ${escapeHtml(sentByMe.status_text || '')}</span>
-           ${sentByMe.status_image_url ? `<img src="${escapeHtml(sentByMe.status_image_url)}" onclick="event.stopPropagation();openFullImage('${escapeHtml(sentByMe.status_image_url)}')" alt="">` : ''}
+           ${sentByMe.status_image_url ? `<img src="${escapeHtml(sentByMe.status_image_url)}" data-open-full="${escapeHtml(sentByMe.status_image_url)}" alt="" style="cursor:zoom-in;">` : ''}
          </div>`
       : '';
 
@@ -1030,6 +1030,13 @@ function renderFriendsFeed() {
   container.querySelectorAll('.user-status-card').forEach(card => {
     card.addEventListener('click', (e) => {
       if (e.target.closest('.btn')) return;
+      // Private-sent preview image → fullscreen viewer (delegated, no inline onclick)
+      const fullImg = e.target.closest('[data-open-full]');
+      if (fullImg) {
+        e.stopPropagation();
+        openFullImage(fullImg.dataset.openFull);
+        return;
+      }
       const avatarEl = e.target.closest('.avatar-container.has-photo');
       if (avatarEl) {
         const vid = avatarEl.querySelector('video');
@@ -1626,7 +1633,7 @@ function buildChatRow(msg, myId) {
   const mediaHtml = msg.image_url
     ? isVideo
       ? `<video src="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;" controls playsinline preload="metadata"></video>`
-      : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" onclick="openFullImage('${escapeHtml(msg.image_url)}')" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
+      : `<img src="${escapeHtml(msg.image_url)}" alt="Shared image" loading="lazy" data-open-full="${escapeHtml(msg.image_url)}" style="max-width:100%;border-radius:12px;margin-top:6px;display:block;cursor:zoom-in;">`
     : '';
 
   const replyHtml = msg.reply
@@ -3823,6 +3830,12 @@ function initEventListeners() {
 
   // Chat
   document.getElementById('chat-send-btn')?.addEventListener('click', sendChatMessage);
+  // Chat reply bar close — no inline onclick (CSP blocks inline handlers)
+  document.getElementById('chat-reply-cancel')?.addEventListener('click', () => {
+    clearReply();
+    const input = document.getElementById('chat-input');
+    if (input) input.focus();
+  });
 
   // Chat search — toggle bar, Enter to search, close
   document.getElementById('chat-search-btn')?.addEventListener('click', () => {
@@ -3855,6 +3868,13 @@ function initEventListeners() {
     if (pill) {
       e.stopPropagation();
       toggleReaction(pill.dataset.msgId, pill.dataset.emoji);
+      return;
+    }
+    // Shared image → fullscreen viewer (delegated, no inline onclick)
+    const openImg = e.target.closest('[data-open-full]');
+    if (openImg) {
+      e.stopPropagation();
+      openFullImage(openImg.dataset.openFull);
       return;
     }
     // Action sheet buttons → Reply / Copy / Delete
