@@ -3109,11 +3109,33 @@ function openUsernameModal(mode = 'onboarding') {
   modal.style.display = 'flex';
 }
 
-function maybeShowUsernameOnboarding() {
+async function maybeShowUsernameOnboarding() {
   if (_usernameOnboarded) return;
   if (!state.userProfile) return;
-  // Mandatory: once a handle is chosen (username_chosen) we never ask again.
+  // Fast path: the in-memory profile says a handle was already chosen.
   if (state.userProfile.username_chosen) return;
+
+  // The in-memory flag is falsy — confirm against the DB before nagging.
+  // Fallback/partial profile objects (e.g. the getSessionAndProfile error
+  // path) can lack username_chosen entirely, which would flash the mandatory
+  // modal for registered users who already picked a handle. The DB is the
+  // source of truth, so re-check it once before deciding.
+  let fresh = null;
+  try {
+    fresh = await getSessionAndProfile(_savedHash, _savedSearch);
+  } catch {
+    // Network blip — fail CLOSED (skip the modal). Every new user already
+    // gets an auto-assigned handle from the on_auth_user_created trigger, so
+    // nobody is ever blocked; the Rename button covers handle changes.
+    return;
+  }
+  if (fresh) state.userProfile = { ...state.userProfile, ...fresh };
+
+  // Only open when the DB EXPLICITLY says no handle was chosen yet. undefined
+  // (partial fallback object) means "don't nag" — registered users never flash.
+  if (!fresh || fresh.username_chosen !== false) return;
+
+  // Mandatory: only genuinely new users (no handle chosen in the DB) see this.
   _usernameOnboarded = true;
   openUsernameModal('onboarding');
 }
