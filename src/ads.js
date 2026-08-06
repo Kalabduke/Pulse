@@ -20,6 +20,13 @@
       ID AdMob validates, so enabling one without the other crashes the app.
    4. Set enableWebAds / enableNativeAds to true.
 
+   IMPORTANT (APK crash): the AndroidManifest AdMob App ID must ALWAYS be a
+   valid ca-app-pub-NNN~NNN format — the SDK's auto-init provider reads it at
+   app process START and kills the app if it's a placeholder. The manifest
+   currently holds Google's official TEST App ID (ca-app-pub-3940256099942544~3347511713)
+   so the APK launches with ads still disabled. Swap BOTH the manifest value
+   and ADS_CONFIG.admob.appId to your real App ID when going live.
+
    DEV PREVIEW: set devMode to true to load Google's official test ad unit IDs
    and see the slot render before you're approved. Never ship with devMode on.
 
@@ -37,7 +44,9 @@ export const ADS_CONFIG = {
   // Android — Google AdMob
   enableNativeAds: false,
   admob: {
-    appId: 'ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX', // App ID (also in AndroidManifest)
+    // Mirrors the AndroidManifest value — must stay a VALID format or the
+    // AdMob SDK crashes the APK at process start. Test ID = no crash + ads off.
+    appId: 'ca-app-pub-3940256099942544~3347511713', // App ID (also in AndroidManifest)
     bannerAdUnitId: 'ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX' // Banner ad unit
   },
 

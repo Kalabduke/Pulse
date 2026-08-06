@@ -49,11 +49,11 @@
         "Google Play store listing approval"
       ],
       "get_these_ids": [
-        {
-          "id_name": "AdMob App ID",
-          "format": "ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX",
-          "where_to_paste": "android/app/src/main/AndroidManifest.xml → com.google.android.gms.ads.APPLICATION_ID AND src/ads.js → ADS_CONFIG.admob.appId"
-        },
+    {
+      "id_name": "AdMob App ID",
+      "format": "ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX (manifest must ALWAYS hold a VALID format App ID — the AdMob SDK auto-init provider crashes the APK at process start if the manifest has a placeholder. Currently ships Google's official TEST App ID ca-app-pub-3940256099942544~3347511713 so the APK launches with ads off)",
+      "where_to_paste": "android/app/src/main/AndroidManifest.xml → com.google.android.gms.ads.APPLICATION_ID AND src/ads.js → ADS_CONFIG.admob.appId (swap BOTH together at go-live)"
+    },
         {
           "id_name": "Banner ad unit ID",
           "format": "ca-app-pub-XXXXXXXXXXXXXXXX/XXXXXXXXXX",

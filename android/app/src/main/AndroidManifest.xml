@@ -9,12 +9,17 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
-        <!-- Google AdMob App ID — replace with your real App ID from
-             https://admob.google.com (must also match src/ads.js). The app
-             only initializes AdMob once a real ID is configured. -->
+        <!-- Google AdMob App ID. IMPORTANT: must be a VALID app ID format
+             (ca-app-pub-NNNNNNNNNNNNNNNN~NNNNNNNNNN) — the AdMob SDK's
+             auto-init provider reads this at app PROCESS START (before any
+             JS runs) and CRASHES the app if it's a placeholder (X's).
+             This is Google's official TEST app ID so the APK launches fine
+             with ads still disabled (src/ads.js enableNativeAds=false).
+             When going live, replace it with your real AdMob App ID
+             (https://admob.google.com) AND update src/ads.js together. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-XXXXXXXXXXXXXXXX~XXXXXXXXXX" />
+            android:value="ca-app-pub-3940256099942544~3347511713" />
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
