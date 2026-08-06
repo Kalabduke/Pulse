@@ -387,14 +387,6 @@
 
         <div class="status-compose-body">
           <div class="status-field">
-            <label class="status-field-label" for="status-name-input">Display name</label>
-            <div class="status-input-wrap">
-              <span class="status-input-icon">👤</span>
-              <input type="text" id="status-name-input" class="input-field" placeholder="Your name">
-            </div>
-          </div>
-
-          <div class="status-field">
             <label class="status-field-label">Status emoji</label>
             <div class="emoji-custom-row">
               <div class="emoji-preview-box" id="emoji-preview">😊</div>
@@ -526,12 +518,32 @@
   <div id="account-modal" class="custom-modal-overlay" style="display:none;">
     <div class="custom-modal-box" style="max-width:400px;">
       <div class="custom-modal-icon">⚙️</div>
-      <h3 class="custom-modal-title">Account</h3>
-      <p class="custom-modal-body" id="account-modal-status" style="font-size:12px;"></p>
-      <button id="btn-deactivate-account" class="btn btn-secondary" style="width:100%;margin-bottom:8px;">😴 Temporarily deactivate account</button>
+      <h3 class="custom-modal-title">Settings</h3>
+
+      <!-- Profile — change display name (never overrides nicknames friends set for you) -->
+      <div style="border-top:1px solid rgba(255,255,255,0.07); margin-top:6px; padding-top:14px;">
+        <label class="field-label" style="display:block; text-align:left; margin-bottom:6px;">DISPLAY NAME</label>
+        <input type="text" id="profile-name-input" class="input-field" placeholder="Your name" maxlength="50" autocomplete="name">
+        <button id="btn-save-profile-name" class="btn btn-primary" style="width:100%; margin-top:8px;">Save name</button>
+      </div>
+
+      <!-- Profile — change username (2x/week cooldown) -->
+      <div style="border-top:1px solid rgba(255,255,255,0.07); margin-top:12px; padding-top:14px;">
+        <label class="field-label" style="display:block; text-align:left; margin-bottom:6px;">USERNAME</label>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+          <span id="profile-username-display" style="font-family:monospace; color:hsl(var(--text-muted)); font-size:13px;">@username</span>
+          <button id="btn-change-username" class="btn btn-secondary btn-small" style="padding:6px 12px;">Change</button>
+        </div>
+      </div>
+
+      <!-- Danger zone -->
+      <div style="border-top:1px solid rgba(255,255,255,0.07); margin-top:12px; padding-top:14px;">
+        <p class="custom-modal-body" id="account-modal-status" style="font-size:12px;"></p>
+        <button id="btn-deactivate-account" class="btn btn-secondary" style="width:100%;margin-bottom:8px;">😴 Temporarily deactivate account</button>
       <button id="btn-delete-account" class="btn btn-secondary" style="width:100%;color:hsl(356 70% 60%);border-color:rgba(255,80,80,0.3);">🗑️ Permanently delete account</button>
       <button id="btn-cancel-deletion" class="btn btn-primary" style="width:100%;margin-top:8px;display:none;">↩️ Cancel deletion</button>
       <button id="btn-account-close" class="btn btn-secondary" style="width:100%;margin-top:8px;">Close</button>
+      </div>
     </div>
   </div>
 

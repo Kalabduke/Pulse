@@ -372,6 +372,28 @@ export async function uploadStatusImage(file) {
    STATUS & PROFILES
    ========================================== */
 
+// Change ONLY my display name — separate from status updates. Friends who
+// set a nickname for me still see the nickname (nickname takes priority in
+// fetchConnections: myNickname || friendName).
+export async function updateMyName(name) {
+  const { data: { user } } = await client().auth.getUser();
+  if (!user) throw new Error('Not logged in.');
+
+  const clean = (name || '').trim();
+  if (!clean) throw new Error('Display name is required.');
+  if (clean.length > 50) throw new Error('Display name must be 50 characters or less.');
+
+  const { data, error } = await client()
+    .from('profiles')
+    .update({ name: clean, updated_at: new Date().toISOString() })
+    .eq('id', user.id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function updateStatus(name, emoji, text, imageUrl = null, mediaType = 'image') {
   const { data: { user } } = await client().auth.getUser();
   if (!user) throw new Error('Not logged in.');

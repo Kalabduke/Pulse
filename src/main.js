@@ -15,6 +15,7 @@ import {
   signInWithPassword,
   signUpWithPassword,
   resendConfirmationEmail,
+  updateMyName,
   signInWithGoogle,
   sendPasswordReset,
   signOutUser,
@@ -2464,7 +2465,9 @@ function updateStatusLivePreview() {
   const avatarImg = document.getElementById('status-live-image');
   if (!nameEl || !textEl) return;
 
-  const name = document.getElementById('status-name-input')?.value?.trim() || state.userProfile?.name || 'My Status';
+  // Name is edited in Settings → Profile, never in the status modal — so the
+  // live preview always shows the saved name (the nickname friends set stays priority).
+  const name = state.userProfile?.name || 'My Status';
   const text = document.getElementById('status-text-input')?.value?.trim();
   const emoji = document.getElementById('emoji-preview')?.textContent?.trim() || state.selectedEmoji || '😊';
 
@@ -3512,9 +3515,7 @@ function initEventListeners() {
   // Status Modal
   document.getElementById('btn-open-status-modal')?.addEventListener('click', () => {
     const modal = document.getElementById('status-modal');
-    const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
-    if (nameInput) nameInput.value = state.userProfile?.name || '';
     // Pre-fill current status text so user can edit rather than retype
     if (textInput) {
       textInput.value = state.userProfile?.status_text || '';
@@ -3595,6 +3596,9 @@ function initEventListeners() {
       await setMyUsername(raw);
       state.userProfile = { ...state.userProfile, username: raw, username_chosen: true, skip_username: false };
       updateMyStatusUI();
+      // Keep the Settings modal's username row in sync if it's open behind this one
+      const unameEl = document.getElementById('profile-username-display');
+      if (unameEl) unameEl.textContent = `@${raw}`;
       modal.style.display = 'none';
       showToast(_usernameModalMode === 'rename' ? `Username updated to @${raw}! ✨` : `Welcome, @${raw}! ✨`);
     } catch (err) {
@@ -3614,6 +3618,11 @@ function initEventListeners() {
     const status = document.getElementById('account-modal-status');
     const cancelBtn = document.getElementById('btn-cancel-deletion');
     const deleting = state.userProfile?.deletion_requested_at;
+    // Pre-fill profile fields with current values
+    const nameInput = document.getElementById('profile-name-input');
+    if (nameInput) nameInput.value = state.userProfile?.name || '';
+    const unameEl = document.getElementById('profile-username-display');
+    if (unameEl) unameEl.textContent = state.userProfile?.username ? `@${state.userProfile.username}` : '@username';
     if (status) {
       if (deleting) {
         const d = new Date(deleting);
@@ -3629,6 +3638,37 @@ function initEventListeners() {
   window.openAccountModal = openAccountModal;
   document.getElementById('btn-account-close')?.addEventListener('click', () => {
     document.getElementById('account-modal').style.display = 'none';
+  });
+
+  // Profile → Save name — updates only the display name. Nicknames friends
+  // set for me keep priority (fetchConnections: myNickname || friendName),
+  // so this only changes what friends without a nickname see.
+  document.getElementById('btn-save-profile-name')?.addEventListener('click', async () => {
+    const nameInput = document.getElementById('profile-name-input');
+    const btn = document.getElementById('btn-save-profile-name');
+    const newName = nameInput?.value.trim() || '';
+    if (!newName) {
+      showToast('Please enter a name.', 'error');
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    try {
+      const updated = await updateMyName(newName);
+      state.userProfile = { ...state.userProfile, name: updated.name };
+      updateMyStatusUI();
+      renderDesktopSidebar();
+      invalidateCache();
+      showToast('Name updated! ✨');
+    } catch (err) {
+      showToast(err.message || 'Could not update name.', 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'Save name'; }
+    }
+  });
+
+  // Profile → Change username — reuses the shared rename modal (2x/week cooldown)
+  document.getElementById('btn-change-username')?.addEventListener('click', () => {
+    openUsernameModal('rename');
   });
   document.getElementById('btn-deactivate-account')?.addEventListener('click', async () => {
     const ok = await showConfirmModal({
@@ -3712,9 +3752,9 @@ function initEventListeners() {
     const origText = saveBtn.innerHTML;
     saveBtn.innerHTML = '<span>Saving...</span>';
 
-    const nameInput = document.getElementById('status-name-input');
     const textInput = document.getElementById('status-text-input');
-    const name = nameInput?.value.trim() || state.userProfile.name;
+    // Name is managed in Settings → Profile, not here — always send the saved name
+    const name = state.userProfile.name;
     const text = textInput?.value.trim() || '';
 
     try {
@@ -3837,8 +3877,8 @@ function initEventListeners() {
     updateCounter();
   }
 
-  // Keep the live preview name in sync while typing
-  document.getElementById('status-name-input')?.addEventListener('input', updateStatusLivePreview);
+  // Name is edited in Settings → Profile, so the live preview uses the saved name.
+  // (The char-counter input listener above already re-renders the live preview.)
 
   // Username live validation + availability hint lives on the username modal
   // (onboarding + rename) — see openUsernameModal().
