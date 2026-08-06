@@ -23,7 +23,9 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onStart() {
+    // NOTE: Capacitor 8's BridgeActivity declares onStart()/onStop() as public —
+    // overriding them with protected fails with "weaker access privileges".
+    public void onStart() {
         super.onStart();
         // App is visible — let PulseFCMService skip OS notifications (realtime
         // toasts handle updates while the app is open, same as the web SW).
@@ -31,7 +33,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
-    protected void onStop() {
+    public void onStop() {
         super.onStop();
         PulseFCMService.appForeground = false;
     }
