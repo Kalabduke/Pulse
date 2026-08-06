@@ -30,8 +30,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Deep link for Google OAuth callback -->
-            <intent-filter android:autoVerify="true">
+            <!-- Deep link for Google OAuth callback. NOTE: no autoVerify here —
+                 autoVerify only applies to https + assetlinks.json, and having it
+                 on a custom scheme is a known Android 12+ launch-crash trigger.
+                 Custom-scheme deep links resolve without it. -->
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
