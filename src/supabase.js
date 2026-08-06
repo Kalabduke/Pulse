@@ -78,6 +78,16 @@ export async function signUpWithPassword(email, password, name) {
   return data;
 }
 
+export async function resendConfirmationEmail(email) {
+  const { data, error } = await client().auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: window.location.origin }
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function signInWithGoogle() {
   const isNative = window.Capacitor?.isNativePlatform();
   if (isNative) {

@@ -14,6 +14,7 @@ import {
   resetSupabaseConfig,
   signInWithPassword,
   signUpWithPassword,
+  resendConfirmationEmail,
   signInWithGoogle,
   sendPasswordReset,
   signOutUser,
@@ -99,6 +100,7 @@ let isStatusImageRemoved = false;
 let currentChatImage = null;
 let currentChatFriend = null;
 let currentReplyTo = null; // { id, content_text, image_url, sender_id }
+let pendingConfirmEmail = null; // email awaiting confirmation — powers the resend-confirmation link
 
 // Chat pagination + typing state
 let chatMessageLimit = 50;      // messages loaded per chat session (grows via "Load earlier")
@@ -457,6 +459,65 @@ function clearAuthError() {
   if (box) box.style.display = 'none';
 }
 
+const RESEND_COOLDOWN_KEY = 'pulse_resend_cooldown_until';
+const RESEND_COOLDOWN_MS = 60000; // 60s rate limit on resending confirmation emails
+let _resendTick = null;
+
+// Returns ms remaining in the resend cooldown (0 = can resend). Persisted in
+// localStorage so a page refresh can't bypass the rate limit.
+function getResendCooldownRemaining() {
+  try {
+    const until = parseInt(localStorage.getItem(RESEND_COOLDOWN_KEY) || '0', 10);
+    return Math.max(0, until - Date.now());
+  } catch {
+    return 0;
+  }
+}
+
+function setResendCooldown() {
+  try {
+    localStorage.setItem(RESEND_COOLDOWN_KEY, String(Date.now() + RESEND_COOLDOWN_MS));
+  } catch { /* storage unavailable */ }
+}
+
+function clearResendCooldown() {
+  try {
+    localStorage.removeItem(RESEND_COOLDOWN_KEY);
+  } catch { /* storage unavailable */ }
+}
+
+// Disables the resend button with a live countdown until the stored cooldown expires.
+function startResendCooldownTick() {
+  const btn = document.getElementById('btn-resend-confirm');
+  if (!btn) return;
+  const tick = () => {
+    const remaining = getResendCooldownRemaining();
+    if (remaining <= 0) {
+      btn.disabled = false;
+      btn.textContent = 'Resend confirmation';
+      if (_resendTick) { clearInterval(_resendTick); _resendTick = null; }
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = `Resend again in ${Math.ceil(remaining / 1000)}s`;
+  };
+  tick();
+  if (_resendTick) clearInterval(_resendTick);
+  _resendTick = setInterval(tick, 1000);
+}
+
+function showResendConfirmLink() {
+  const link = document.getElementById('link-resend-confirm');
+  if (link) link.style.display = 'block';
+  startResendCooldownTick(); // restore disabled state + countdown if still cooling down
+}
+
+function hideResendConfirmLink() {
+  const link = document.getElementById('link-resend-confirm');
+  if (link) link.style.display = 'none';
+  if (_resendTick) { clearInterval(_resendTick); _resendTick = null; }
+}
+
 function setAuthMode(mode) {
   state.authMode = mode;
 
@@ -484,6 +545,7 @@ function setAuthMode(mode) {
     if (linkForgot) linkForgot.style.display = 'none';
     if (label) label.textContent = 'Create Account';
     if (passwordInput) passwordInput.autocomplete = 'new-password';
+    hideResendConfirmLink();
   }
 
   clearAuthError();
@@ -3342,11 +3404,15 @@ function initEventListeners() {
           await checkNavigationState();
         } else {
           // Email confirmation required
+          pendingConfirmEmail = email;
           showToast('Account created! Check your email to confirm, then sign in.');
           setAuthMode('signin');
+          showResendConfirmLink();
         }
       } else {
         await signInWithPassword(email, password);
+        pendingConfirmEmail = null;
+        hideResendConfirmLink();
         showToast('Welcome back! 💫');
       }
     } catch (err) {
@@ -3365,6 +3431,41 @@ function initEventListeners() {
       await sendPasswordReset(email);
       showToast('Password reset link sent! Check your email.');
     } catch (err) {
+      showAuthError(err.message);
+    }
+  });
+
+  // Resend confirmation email — shown after signup when email confirmation is pending
+  document.getElementById('btn-resend-confirm')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('btn-resend-confirm');
+    const email = pendingConfirmEmail || document.getElementById('auth-email')?.value.trim();
+    if (!email) {
+      showAuthError('Enter your email above first.');
+      return;
+    }
+    // Enforce the rate limit BEFORE sending — a refresh mid-cooldown can't bypass it
+    const coolingDown = getResendCooldownRemaining();
+    if (coolingDown > 0) {
+      showAuthError(`Please wait ${Math.ceil(coolingDown / 1000)}s before resending.`);
+      startResendCooldownTick();
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+    }
+    try {
+      await resendConfirmationEmail(email);
+      clearAuthError();
+      setResendCooldown();
+      showToast('Confirmation email sent! Check your inbox.');
+      startResendCooldownTick();
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Resend confirmation';
+      }
       showAuthError(err.message);
     }
   });
