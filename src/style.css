@@ -690,6 +690,14 @@ body {
   z-index: 1200;
 }
 
+/* The username rename popup opens ON TOP of the Settings (account) modal —
+   without a higher z-index it would render underneath it (both share
+   .custom-modal-overlay's 1100). 1150 keeps it above Settings but still
+   below confirm dialogs (1200) and toasts. */
+#username-onboarding-modal {
+  z-index: 1150;
+}
+
 .custom-modal-box {
   background: hsl(var(--bg-surface));
   border: 1px solid var(--border-glow);

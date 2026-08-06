@@ -3920,11 +3920,9 @@ function initEventListeners() {
 
   const myHandle = () => (state.userProfile?.username ? `@${state.userProfile.username}` : '');
 
-  // Rename username — opens the shared username modal in rename mode (2x/week limit)
-  document.getElementById('btn-rename-username')?.addEventListener('click', () => {
-    openUsernameModal('rename');
-  });
-
+  // Username rename is ONLY available in Settings → Profile (btn-change-username),
+  // so the dashboard no longer has a rename button — keeps the cooldown enforcement
+  // in one place and prevents accidental renames.
   document.getElementById('my-id-display')?.addEventListener('click', async () => {
     const handle = myHandle();
     if (!handle) return;
