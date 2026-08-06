@@ -2900,6 +2900,9 @@ button svg {
 
   #app-root.auth-mode #desktop-sidebar { display: none; }
 
+  /* Settings gear lives in the sidebar rail on desktop — hide the header gear */
+  #btn-header-settings { display: none; }
+
   /* ---- Sidebar rail ---- */
   #desktop-sidebar {
     display: flex;

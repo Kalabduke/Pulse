@@ -3289,8 +3289,11 @@ function initEventListeners() {
   document.getElementById('sidebar-search-input')?.addEventListener('input', renderDesktopSidebar);
 
   // Settings gear in the sidebar head + clicking your profile row both open
-  // the account modal (the header keeps its own Update button)
+  // the account modal (the header keeps its own Update button). The header
+  // gear (btn-header-settings) only shows on mobile <900px where the sidebar
+  // rail is hidden.
   document.getElementById('sidebar-settings-btn')?.addEventListener('click', openAccountModal);
+  document.getElementById('btn-header-settings')?.addEventListener('click', openAccountModal);
 
   document.getElementById('desktop-sidebar-me')?.addEventListener('click', openAccountModal);
 
@@ -3504,6 +3507,10 @@ function initEventListeners() {
         state.realtimeChannel = null;
       }
       invalidateCache();
+      // Sign Out now lives inside the Settings modal — close it so the
+      // overlay doesn't stay stuck on the auth screen.
+      const accountModal = document.getElementById('account-modal');
+      if (accountModal) accountModal.style.display = 'none';
       navigateTo('auth');
       setAuthMode('signin');
       showToast('Signed out successfully.');
